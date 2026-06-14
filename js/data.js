@@ -8,6 +8,7 @@ const STORAGE_KEY = 'ebema_transporte_db';
 // Mapeo colección local ↔ tabla Supabase (con su clave primaria)
 const TABLE_MAP = [
   { local: 'logisticsCentres',  table: 'logistics_centres',  pk: 'id' },
+  { local: 'transportZones',     table: 'transport_zones',      pk: 'zona' },
   { local: 'routes',            table: 'routes',             pk: 'id' },
   { local: 'truckTypes',        table: 'truck_types',        pk: 'id' },
   { local: 'transports',        table: 'transports',         pk: 'id' },
@@ -17,8 +18,7 @@ const TABLE_MAP = [
   { local: 'users',             table: 'app_users',          pk: 'email' },
   { local: 'providers',         table: 'providers',          pk: 'email' },
   { local: 'tariffConfig',       table: 'tariff_config',        pk: 'id' },
-  { local: 'clientTariffConfig', table: 'client_tariff_config', pk: 'id' },
-  { local: 'transportZones',     table: 'transport_zones',      pk: 'zona' }
+  { local: 'clientTariffConfig', table: 'client_tariff_config', pk: 'id' }
 ];
 
 // Capacidad nominal en KG a partir del nombre del tipo de camión (ej: "Camión 28 Ton" -> 28000)

@@ -780,7 +780,8 @@ function renderRutasSubview(container) {
               comuna: comunaCsv || null,
               region: regionCsv || null,
               tipo: clasifNorm || null,
-              estado_erp: false
+              estado_erp: false,
+              created_at: new Date().toISOString()
             };
             zonasNuevasMap.set(idZona, nuevaZona);
             parsedNewZonas.push(nuevaZona);

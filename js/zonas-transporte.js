@@ -408,6 +408,8 @@ export function renderZonasView(container) {
           showAlert('Ya existe una zona con ese ID.', 'error');
           return;
         }
+        // Preservar created_at original (no enviar null al actualizar)
+        zonaData.created_at = activeDb.transportZones[idx].created_at || new Date().toISOString();
         activeDb.transportZones[idx] = zonaData;
         saveDatabase(activeDb);
         showAlert('Zona de transporte actualizada correctamente.');
@@ -417,6 +419,7 @@ export function renderZonasView(container) {
         showAlert('Ya existe una zona registrada con ese ID.', 'error');
         return;
       }
+      zonaData.created_at = new Date().toISOString();
       activeDb.transportZones.push(zonaData);
       saveDatabase(activeDb);
       showAlert('Zona de transporte registrada con éxito.');
@@ -544,7 +547,8 @@ export function renderZonasView(container) {
             comuna: comuna || null,
             region: region || null,
             tipo: tipo || null,
-            estado_erp
+            estado_erp,
+            created_at: new Date().toISOString()
           });
         }
       });
