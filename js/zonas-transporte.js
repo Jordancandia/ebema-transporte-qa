@@ -11,7 +11,7 @@ let editingZonaId = null;
 
 // Normaliza una clave de columna: sin tildes, minúsculas, sin espacios ni símbolos.
 // "País" / "PAIS" / "Pa�s" -> "pais"
-function normalizeKey(s) {
+export function normalizeKey(s) {
   return s.toString()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -19,7 +19,7 @@ function normalizeKey(s) {
 }
 
 // Normaliza un texto para comparación: sin tildes, minúsculas, espacios simples.
-function normalizeText(s) {
+export function normalizeText(s) {
   return s.toString()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -28,7 +28,7 @@ function normalizeText(s) {
 }
 
 // Busca el valor de una columna del CSV sin importar mayúsculas/tildes/espacios.
-function getField(row, ...names) {
+export function getField(row, ...names) {
   const normalizedRow = {};
   Object.keys(row).forEach(k => { normalizedRow[normalizeKey(k)] = row[k]; });
   for (const name of names) {
@@ -282,6 +282,7 @@ export function renderZonasView(container) {
               pais;zona;denominacion
             </code>
             Opcionalmente puede incluir: <code class="font-data-mono text-xs">comuna, region, tipo, estado</code>. Si una zona no incluye comuna, región o tipo, quedará marcada como "Completar Datos" para definirla luego desde la plataforma.
+            <br>El campo <code class="font-data-mono text-xs">estado</code> indica si la zona ya está creada en SAP/ERP: <code class="font-data-mono text-xs">1</code> = Creada en ERP, <code class="font-data-mono text-xs">0</code> = Pendiente de creación en ERP.
           </p>
 
           <div class="border-2 border-dashed border-outline-variant hover:border-primary hover:bg-primary-container/[0.03] rounded-lg p-xl text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-sm" id="csv-zona-dropzone">
@@ -500,8 +501,10 @@ export function renderZonasView(container) {
         let region = normalizeRegionName((getField(row, 'region', 'región') || '').trim());
         let tipo = (getField(row, 'tipo') || '').trim();
         tipo = TIPOS_ZONA.find(t => t.toLowerCase() === tipo.toLowerCase()) || '';
+        // Convención del campo "estado": 1 = Creada en ERP, 0 (o vacío) = Pendiente de creación en ERP.
+        // También se aceptan equivalentes de texto (si/true/creada/erp) por compatibilidad.
         const estadoRaw = (getField(row, 'estado', 'estado_erp', 'estadoerp') || '').trim().toLowerCase();
-        const estado_erp = ['si', 'sí', 'true', '1', 'creada', 'erp'].includes(estadoRaw);
+        const estado_erp = ['1', 'si', 'sí', 'true', 'creada', 'erp'].includes(estadoRaw);
 
         // Estandarizar nombre de comuna (mayúsculas/sin tildes) e inferir región si falta
         if (comuna) {

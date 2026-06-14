@@ -1,7 +1,7 @@
 import { getDatabase, saveDatabase, getCentreName } from './data.js';
 import { generateSapCode, parseCSV, showAlert, geocodeAddress, escapeHtml } from './utils.js';
 import { renderLogisticsView } from './logistics.js';
-import { renderZonasView } from './zonas-transporte.js';
+import { renderZonasView, getField, normalizeRegionName, standardizeComuna } from './zonas-transporte.js';
 import { REGIONES, COMUNAS_POR_REGION, TIPOS_ZONA, GRUPOS_ORIGEN, findRegionByComuna } from './chile-geo.js';
 
 // Estilos de la característica especial de la ruta (usada por el motor de tarifas)
@@ -339,6 +339,7 @@ function renderRutasSubview(container) {
             Son obligatorias las columnas: <code class="font-data-mono text-xs">id_ruta, denominacion, origen, id_zona_transporte, destino, comuna, region, tipo, clasificacion, estado</code>.
             Las columnas <code class="font-data-mono text-xs">km, georreferencia, estado_georreferencia</code> son opcionales; si faltan, la ruta quedará marcada como "Completar Datos".
             <br>El campo <code class="font-data-mono text-xs">origen</code> debe ser uno de: ${GRUPOS_ORIGEN.join(', ')}.
+            <br>El campo <code class="font-data-mono text-xs">estado</code> indica si la ruta ya está creada en SAP/ERP: <code class="font-data-mono text-xs">1</code> = Creada en ERP, <code class="font-data-mono text-xs">0</code> = Pendiente de creación en ERP.
             <br>El campo <code class="font-data-mono text-xs">georreferencia</code> debe tener el formato <code class="font-data-mono text-xs">latitud,longitud</code> (ej: -33.4489,-70.6693).
             <br>Si el <code class="font-data-mono text-xs">id_zona_transporte</code> no existe aún, se creará automáticamente una nueva Zona de Transporte con los datos de destino/comuna/región/clasificación indicados.
           </p>
@@ -651,7 +652,14 @@ function renderRutasSubview(container) {
   function handleCsvRouteFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-      const text = e.target.result;
+      const buffer = e.target.result;
+      let text = new TextDecoder('utf-8').decode(buffer);
+      // Los archivos exportados desde Excel suelen venir en Windows-1252/ISO-8859-1.
+      // Si la decodificación UTF-8 produce caracteres de reemplazo (�) en tildes/ñ,
+      // se reintenta con Windows-1252.
+      if (text.includes('�')) {
+        text = new TextDecoder('windows-1252').decode(buffer);
+      }
       const rows = parseCSV(text);
       if (rows.length === 0) {
         showAlert('El archivo CSV está vacío o no tiene el formato correcto.', 'error');
@@ -668,22 +676,32 @@ function renderRutasSubview(container) {
       const zonasNuevasMap = new Map();
 
       rows.forEach(row => {
-        const idRuta = (row.id_ruta || row.codigo || '').toUpperCase().replace(/\s+/g, '');
-        const denominacionCsv = (row.denominacion || row['denominación'] || '').trim();
-        const origenCsv = (row.origen || '').trim().toUpperCase();
-        const idZona = (row.id_zona_transporte || '').trim().toUpperCase();
-        const destinoCsv = (row.destino || '').trim();
-        const comunaCsv = (row.comuna || '').trim();
-        let regionCsv = (row.region || row['región'] || '').trim();
-        const tipoCsv = (row.tipo || '').trim();
-        const clasifCsv = (row.clasificacion || row['clasificación'] || '').trim();
-        const kmCsv = row.km !== undefined && row.km !== '' ? Number(row.km) : null;
-        const estadoRaw = (row.estado || '').trim().toLowerCase();
-        const estado_erp = ['si', 'sí', 'true', '1', 'creada', 'erp'].includes(estadoRaw);
-        const georefCsv = parseGeorref(row.georreferencia);
-        const estadoGeorefRaw = (row.estado_georreferencia || '').trim().toLowerCase();
+        const idRuta = (getField(row, 'id_ruta', 'codigo') || '').toUpperCase().replace(/\s+/g, '');
+        const denominacionCsv = (getField(row, 'denominacion', 'denominación') || '').trim();
+        const origenCsv = (getField(row, 'origen') || '').trim().toUpperCase();
+        const idZona = (getField(row, 'id_zona_transporte') || '').trim().toUpperCase();
+        const destinoCsv = (getField(row, 'destino') || '').trim();
+        let comunaCsv = (getField(row, 'comuna') || '').trim();
+        let regionCsv = normalizeRegionName((getField(row, 'region', 'región') || '').trim());
+        const tipoCsv = (getField(row, 'tipo') || '').trim();
+        const clasifCsv = (getField(row, 'clasificacion', 'clasificación') || '').trim();
+        const kmRaw = getField(row, 'km');
+        const kmCsv = kmRaw !== '' && kmRaw !== undefined ? Number(kmRaw) : null;
+        const georefCsv = parseGeorref(getField(row, 'georreferencia'));
+        const estadoGeorefRaw = (getField(row, 'estado_georreferencia') || '').trim().toLowerCase();
 
+        // Estandarizar nombre de comuna (mayúsculas/sin tildes) e inferir región si falta
+        if (comunaCsv) {
+          const std = standardizeComuna(comunaCsv);
+          comunaCsv = std.comuna;
+          if (!regionCsv && std.region) regionCsv = std.region;
+        }
         if (!regionCsv && comunaCsv) regionCsv = findRegionByComuna(comunaCsv);
+
+        // Convención del campo "estado": 1 = Creada en ERP, 0 (o vacío) = Pendiente de creación en ERP.
+        // También se aceptan equivalentes de texto (si/true/creada/erp) por compatibilidad.
+        const estadoRaw = (getField(row, 'estado', 'estado_erp', 'estadoerp') || '').trim().toLowerCase();
+        const estado_erp = ['1', 'si', 'sí', 'true', 'creada', 'erp'].includes(estadoRaw);
 
         const tipoNorm = ['Regional', 'Interregional'].find(t => t.toLowerCase() === tipoCsv.toLowerCase()) || '';
         const clasifNorm = TIPOS_ZONA.find(t => t.toLowerCase() === clasifCsv.toLowerCase()) || '';
@@ -775,7 +793,7 @@ function renderRutasSubview(container) {
         showAlert('No se encontraron registros de rutas válidos.', 'error');
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   }
 
   btnConfirmBulk.addEventListener('click', () => {
