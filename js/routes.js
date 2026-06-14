@@ -149,6 +149,10 @@ function renderRutasSubview(container) {
         </div>
 
         <div class="flex gap-sm w-full md:w-auto">
+          <button id="btn-geo-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
+            <span class="material-symbols-outlined text-[18px]">my_location</span>
+            Georreferenciar Rutas
+          </button>
           <button id="btn-bulk-upload-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">upload_file</span>
             Carga Masiva (CSV)
@@ -176,8 +180,9 @@ function renderRutasSubview(container) {
               <th class="p-md">Clasificación</th>
               <th class="p-md">KM</th>
               <th class="p-md">Estado ERP</th>
-              <th class="p-md">Georreferencia</th>
-              <th class="p-md">Estado Georref.</th>
+              <th class="p-md">Latitud</th>
+              <th class="p-md">Longitud</th>
+              <th class="p-md">Georref.</th>
               <th class="p-md">Vigencia</th>
               <th class="p-md text-center">Acciones</th>
             </tr>
@@ -334,13 +339,13 @@ function renderRutasSubview(container) {
           <p class="font-body-md text-secondary leading-relaxed">
             Sube un archivo delimitado por punto y coma (<code>;</code>) o comas (<code>,</code>). Los encabezados exactos deben ser, en este orden:
             <code class="block p-sm bg-background border border-outline-variant rounded font-data-mono text-primary text-xs mt-xs">
-              id_ruta;denominacion;origen;id_zona_transporte;destino;comuna;region;tipo;clasificacion;km;estado;georreferencia;estado_georreferencia
+              id_ruta;denominacion;origen;id_zona_transporte;destino;comuna;region;tipo;clasificacion;km;estado;latitud;longitud;estado_georreferencia
             </code>
             Son obligatorias las columnas: <code class="font-data-mono text-xs">id_ruta, denominacion, origen, id_zona_transporte, destino, comuna, region, tipo, clasificacion, estado</code>.
-            Las columnas <code class="font-data-mono text-xs">km, georreferencia, estado_georreferencia</code> son opcionales; si faltan, la ruta quedará marcada como "Completar Datos".
+            Las columnas <code class="font-data-mono text-xs">km, latitud, longitud, estado_georreferencia</code> son opcionales; si faltan, la ruta quedará marcada como "Completar Datos".
             <br>El campo <code class="font-data-mono text-xs">origen</code> debe ser uno de: ${GRUPOS_ORIGEN.join(', ')}.
             <br>El campo <code class="font-data-mono text-xs">estado</code> indica si la ruta ya está creada en SAP/ERP: <code class="font-data-mono text-xs">1</code> = Creada en ERP, <code class="font-data-mono text-xs">0</code> = Pendiente de creación en ERP.
-            <br>El campo <code class="font-data-mono text-xs">georreferencia</code> debe tener el formato <code class="font-data-mono text-xs">latitud,longitud</code> (ej: -33.4489,-70.6693).
+            <br>Los campos <code class="font-data-mono text-xs">latitud</code> y <code class="font-data-mono text-xs">longitud</code> corresponden a las coordenadas del destino. Si faltan, puede completarlas luego con el botón "Georreferenciar Rutas".
             <br>Si el <code class="font-data-mono text-xs">id_zona_transporte</code> no existe aún, se creará automáticamente una nueva Zona de Transporte con los datos de destino/comuna/región/clasificación indicados.
           </p>
 
@@ -373,6 +378,37 @@ function renderRutasSubview(container) {
         <div class="p-md border-t border-outline-variant bg-surface-container-low flex justify-end gap-sm">
           <button class="border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded cursor-pointer" id="btn-cancel-route-bulk">Cancelar</button>
           <button class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" id="btn-confirm-route-bulk" disabled>Importar registros</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Georreferenciación Masiva -->
+    <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-300" id="geo-routes-modal">
+      <div class="modal-window w-[560px] max-w-[90vw] bg-white border border-outline-variant shadow-lg rounded-xl overflow-hidden transform scale-95 transition-transform duration-300 max-h-[90vh] overflow-y-auto">
+        <div class="p-md border-b border-outline-variant flex justify-between items-center bg-surface-container-low sticky top-0 z-10">
+          <h4 class="font-headline-sm text-headline-sm font-bold text-on-surface">Georreferenciar Rutas</h4>
+          <button class="text-secondary hover:text-primary cursor-pointer" id="btn-close-geo-modal">
+            <span class="material-symbols-outlined text-[24px]">close</span>
+          </button>
+        </div>
+        <div class="p-lg space-y-md">
+          <p class="font-body-md text-secondary leading-relaxed">
+            Se obtendrá automáticamente la Latitud y Longitud del destino (usando Destino, Comuna y Región) para las rutas pendientes. Las rutas que no puedan ubicarse con precisión quedarán marcadas como <span class="font-bold text-amber-700">REVISAR</span> para ajuste manual de coordenadas en el formulario de edición.
+          </p>
+          <div class="bg-surface-container-low border border-outline-variant rounded p-md text-sm">
+            <span class="font-bold text-headline-sm" id="geo-pending-count">0</span> rutas pendientes de georreferenciar.
+          </div>
+          <div id="geo-progress-wrap" class="hidden space-y-xs">
+            <div class="w-full bg-surface-container-high rounded-full h-2 overflow-hidden">
+              <div id="geo-progress-bar" class="bg-primary h-2 rounded-full transition-all" style="width:0%"></div>
+            </div>
+            <p class="text-xs text-secondary" id="geo-progress-text">0 / 0</p>
+            <div class="max-h-40 overflow-y-auto border border-outline-variant rounded text-xs font-data-mono" id="geo-log"></div>
+          </div>
+        </div>
+        <div class="p-md border-t border-outline-variant bg-surface-container-low flex justify-end gap-sm sticky bottom-0">
+          <button class="border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded cursor-pointer" id="btn-cancel-geo">Cerrar</button>
+          <button class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" id="btn-start-geo">Iniciar Georreferenciación</button>
         </div>
       </div>
     </div>
@@ -638,17 +674,6 @@ function renderRutasSubview(container) {
     }
   });
 
-  // Interpreta "lat,lon" / "lat;lon" / "lat lon" -> { lat, lon } o null
-  function parseGeorref(value) {
-    if (!value) return null;
-    const parts = String(value).trim().split(/[,;|\s]+/).filter(Boolean);
-    if (parts.length < 2) return null;
-    const lat = Number(parts[0]);
-    const lon = Number(parts[1]);
-    if (isNaN(lat) || isNaN(lon)) return null;
-    return { lat, lon };
-  }
-
   function handleCsvRouteFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
@@ -687,8 +712,12 @@ function renderRutasSubview(container) {
         const clasifCsv = (getField(row, 'clasificacion', 'clasificación') || '').trim();
         const kmRaw = getField(row, 'km');
         const kmCsv = kmRaw !== '' && kmRaw !== undefined ? Number(kmRaw) : null;
-        const georefCsv = parseGeorref(getField(row, 'georreferencia'));
-        const estadoGeorefRaw = (getField(row, 'estado_georreferencia') || '').trim().toLowerCase();
+        const latRaw = getField(row, 'latitud', 'lat');
+        const lonRaw = getField(row, 'longitud', 'lon');
+        const latCsv = (latRaw !== '' && latRaw !== undefined) ? Number(latRaw) : null;
+        const lonCsv = (lonRaw !== '' && lonRaw !== undefined) ? Number(lonRaw) : null;
+        const georefCsv = (latCsv !== null && !isNaN(latCsv) && lonCsv !== null && !isNaN(lonCsv)) ? { lat: latCsv, lon: lonCsv } : null;
+        const estadoGeorefRaw = (getField(row, 'estado_georreferencia', 'estado georreferenciacion', 'estado georreferenciación') || '').trim().toLowerCase();
 
         // Estandarizar nombre de comuna (mayúsculas/sin tildes) e inferir región si falta
         if (comunaCsv) {
@@ -815,6 +844,106 @@ function renderRutasSubview(container) {
     renderRutasSubview(container);
   });
 
+  // --- GEORREFERENCIACIÓN MASIVA DE RUTAS ---
+  const geoModal = document.getElementById('geo-routes-modal');
+  const btnGeoRoutes = document.getElementById('btn-geo-routes');
+  const btnCloseGeoModal = document.getElementById('btn-close-geo-modal');
+  const btnCancelGeo = document.getElementById('btn-cancel-geo');
+  const btnStartGeo = document.getElementById('btn-start-geo');
+  const geoPendingCountEl = document.getElementById('geo-pending-count');
+  const geoProgressWrap = document.getElementById('geo-progress-wrap');
+  const geoProgressBar = document.getElementById('geo-progress-bar');
+  const geoProgressText = document.getElementById('geo-progress-text');
+  const geoLogEl = document.getElementById('geo-log');
+
+  let geoRunning = false;
+  let geoCancelled = false;
+
+  const rutasSinGeoref = () => getDatabase().routes.filter(r => !r.georef_estado);
+
+  const openGeoModal = () => {
+    geoPendingCountEl.innerText = rutasSinGeoref().length;
+    geoProgressWrap.classList.add('hidden');
+    geoLogEl.innerHTML = '';
+    geoProgressBar.style.width = '0%';
+    geoProgressText.innerText = '';
+    btnStartGeo.disabled = rutasSinGeoref().length === 0;
+    btnStartGeo.innerText = 'Iniciar Georreferenciación';
+
+    geoModal.classList.remove('pointer-events-none', 'opacity-0');
+    geoModal.querySelector('.modal-window').classList.remove('scale-95');
+  };
+  btnGeoRoutes.addEventListener('click', openGeoModal);
+
+  const closeGeoModal = () => {
+    if (geoRunning) geoCancelled = true;
+    geoModal.classList.add('pointer-events-none', 'opacity-0');
+    geoModal.querySelector('.modal-window').classList.add('scale-95');
+  };
+  btnCloseGeoModal.addEventListener('click', closeGeoModal);
+  btnCancelGeo.addEventListener('click', closeGeoModal);
+
+  btnStartGeo.addEventListener('click', async () => {
+    if (geoRunning) {
+      geoCancelled = true;
+      btnStartGeo.innerText = 'Deteniendo...';
+      btnStartGeo.disabled = true;
+      return;
+    }
+
+    const activeDb = getDatabase();
+    const pending = activeDb.routes.filter(r => !r.georef_estado);
+    if (pending.length === 0) return;
+
+    geoRunning = true;
+    geoCancelled = false;
+    btnStartGeo.innerText = 'Detener';
+    geoProgressWrap.classList.remove('hidden');
+    geoLogEl.innerHTML = '';
+
+    let done = 0, ok = 0, manual = 0;
+
+    for (const r of pending) {
+      if (geoCancelled) break;
+
+      const query = [r.destino, r.comuna, r.region].filter(Boolean).join(', ');
+      try {
+        const coords = await geocodeAddress(query);
+        r.lat = coords.lat;
+        r.lon = coords.lon;
+        r.georef_estado = !!coords.found;
+        if (coords.found) ok++; else manual++;
+        geoLogEl.insertAdjacentHTML('beforeend', `<div class="px-sm py-1 border-b border-outline-variant ${coords.found ? 'text-green-700' : 'text-amber-700'}">${coords.found ? '✓' : '⚠'} ${escapeHtml(r.codigo)} — ${escapeHtml(query)}</div>`);
+      } catch (err) {
+        manual++;
+        geoLogEl.insertAdjacentHTML('beforeend', `<div class="px-sm py-1 border-b border-outline-variant text-red-700">✗ ${escapeHtml(r.codigo)} — error de geolocalización</div>`);
+      }
+      geoLogEl.scrollTop = geoLogEl.scrollHeight;
+
+      done++;
+      geoProgressBar.style.width = `${Math.round((done / pending.length) * 100)}%`;
+      geoProgressText.innerText = `${done} / ${pending.length} — Georreferenciadas: ${ok}, Por revisar: ${manual}`;
+
+      // Guardar progreso periódicamente para no perder avance si se cierra el modal
+      if (done % 10 === 0) saveDatabase(activeDb);
+
+      // Respetar el límite de uso de Nominatim (~1 solicitud por segundo)
+      if (!geoCancelled) await new Promise(resolve => setTimeout(resolve, 1100));
+    }
+
+    saveDatabase(activeDb);
+    geoRunning = false;
+    geoPendingCountEl.innerText = rutasSinGeoref().length;
+    btnStartGeo.disabled = rutasSinGeoref().length === 0;
+    btnStartGeo.innerText = geoCancelled ? 'Detenido' : 'Completado';
+
+    renderRoutesTable(activeDb.routes);
+
+    if (done > 0) {
+      showAlert(`Georreferenciación ${geoCancelled ? 'detenida' : 'finalizada'}: ${ok} ubicadas automáticamente, ${manual} requieren revisión manual.`);
+    }
+  });
+
   // Función auxiliar para abrir el modal en modo edición (usada por la tabla)
   window.__openRouteEditModal = (routeId) => {
     const activeDb = getDatabase();
@@ -853,7 +982,7 @@ function renderRoutesTable(routesList) {
   if (routesList.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="15" class="p-xl text-center text-secondary">
+        <td colspan="16" class="p-xl text-center text-secondary">
           No se encontraron rutas registradas.
         </td>
       </tr>
@@ -869,7 +998,16 @@ function renderRoutesTable(routesList) {
 
     const statusVigencia = r.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
     const statusErp = r.estado_erp ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
-    const statusGeoref = r.georef_estado ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800';
+    const tieneCoords = r.lat !== null && r.lat !== undefined && r.lon !== null && r.lon !== undefined;
+    let georefLabel = 'PENDIENTE';
+    let statusGeoref = 'bg-red-100 text-red-800';
+    if (r.georef_estado) {
+      georefLabel = 'OK';
+      statusGeoref = 'bg-green-100 text-green-800';
+    } else if (tieneCoords) {
+      georefLabel = 'REVISAR';
+      statusGeoref = 'bg-amber-100 text-amber-800';
+    }
 
     const campoPendiente = (valor) => valor
       ? escapeHtml(valor)
@@ -891,10 +1029,11 @@ function renderRoutesTable(routesList) {
           ${r.estado_erp ? 'EN ERP' : 'PENDIENTE'}
         </span>
       </td>
-      <td class="p-md text-xs font-data-mono">${(r.lat !== null && r.lat !== undefined && r.lon !== null && r.lon !== undefined) ? `${r.lat}, ${r.lon}` : campoPendiente('')}</td>
+      <td class="p-md text-xs font-data-mono">${(r.lat !== null && r.lat !== undefined) ? r.lat : campoPendiente('')}</td>
+      <td class="p-md text-xs font-data-mono">${(r.lon !== null && r.lon !== undefined) ? r.lon : campoPendiente('')}</td>
       <td class="p-md">
         <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${statusGeoref}">
-          ${r.georef_estado ? 'SÍ' : 'NO'}
+          ${georefLabel}
         </span>
       </td>
       <td class="p-md">

@@ -65,7 +65,7 @@ const REGION_ALIASES = {
 
 // Convierte un nombre de región en cualquier formato (ej. "REGION DE LOS RIOS")
 // al nombre estándar usado por la plataforma (ej. "Los Ríos")
-function normalizeRegionName(raw) {
+export function normalizeRegionName(raw) {
   if (!raw) return '';
   let s = normalizeText(raw);
   s = s.replace(/^region\s+(del|de)\s+/, '').replace(/^region\s+/, '');
@@ -87,7 +87,7 @@ Object.entries(COMUNAS_POR_REGION).forEach(([region, comunas]) => {
   });
 });
 
-function standardizeComuna(rawComuna) {
+export function standardizeComuna(rawComuna) {
   if (!rawComuna) return { comuna: '', region: '' };
   const match = COMUNA_LOOKUP[normalizeText(rawComuna)];
   if (match) return match;
