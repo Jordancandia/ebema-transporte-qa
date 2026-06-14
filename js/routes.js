@@ -1,5 +1,5 @@
 import { getDatabase, saveDatabase, getCentreName } from './data.js';
-import { generateSapCode, parseCSV, showAlert, geocodeAddress, escapeHtml } from './utils.js';
+import { generateSapCode, parseCSV, showAlert, geocodeAddress, escapeHtml, toCSV, downloadFile } from './utils.js';
 import { renderLogisticsView } from './logistics.js';
 import { renderZonasView, getField, normalizeRegionName, standardizeComuna } from './zonas-transporte.js';
 import { REGIONES, COMUNAS_POR_REGION, TIPOS_ZONA, GRUPOS_ORIGEN, findRegionByComuna } from './chile-geo.js';
@@ -24,7 +24,7 @@ async function calcularDistanciaAuto(cdOrigen, destinoTexto) {
 }
 
 // Resolver el ID de un Centro Logístico a partir de su Grupo de Origen (despacho compartido)
-function resolveOrigenIdFromGrupo(db, grupo) {
+export function resolveOrigenIdFromGrupo(db, grupo) {
   if (!grupo) return (db.logisticsCentres[0] && db.logisticsCentres[0].id) || null;
   const cd = (db.logisticsCentres || []).find(c => String(c.origen_grupo || '').toUpperCase() === String(grupo).toUpperCase());
   return cd ? cd.id : ((db.logisticsCentres[0] && db.logisticsCentres[0].id) || null);
@@ -52,6 +52,8 @@ function fillComunaSelectRoutes(selectEl, region, selected) {
 
 let editingRouteId = null;
 let currentRoutesSubTab = 'rutas';
+let currentFiltroSinGeoref = false;
+let currentFiltroOrigenRuta = '';
 
 // Página unificada "Rutas de Transporte": combina Rutas, Zonas de Transporte y Centros Logísticos en sub-pestañas
 export function renderRoutesView(container) {
@@ -130,25 +132,35 @@ function renderRutasSubview(container) {
         </div>
         <span class="material-symbols-outlined text-[32px] text-primary">inventory</span>
       </div>
-      <div class="bg-surface border border-outline-variant p-md shadow-sm rounded border-l-4 border-amber-400 flex items-center justify-between">
+      <button type="button" id="kpi-sin-georef" class="bg-surface border ${currentFiltroSinGeoref ? 'border-amber-500 ring-2 ring-amber-300' : 'border-outline-variant'} p-md shadow-sm rounded border-l-4 border-amber-400 flex items-center justify-between cursor-pointer text-left transition-all hover:shadow-md" title="Click para filtrar las rutas sin georreferencia">
         <div>
           <h4 class="font-label-caps text-label-caps text-secondary uppercase">Sin Georreferenciar</h4>
           <div class="font-headline-md text-headline-md font-bold text-amber-600 mt-1">${sinGeoref}</div>
         </div>
         <span class="material-symbols-outlined text-[32px] text-amber-500">my_location</span>
-      </div>
+      </button>
     </div>
 
     <!-- Tabla de Rutas -->
     <div class="bg-surface border border-outline-variant rounded shadow-sm overflow-hidden">
       <!-- Barra superior de filtros -->
       <div class="p-md border-b border-outline-variant flex flex-col md:flex-row justify-between items-center gap-md bg-white">
-        <div class="relative w-full md:w-96 focus-within:ring-2 focus-within:ring-primary rounded overflow-hidden">
-          <span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-secondary">search</span>
-          <input type="text" id="route-search" class="w-full bg-surface-container-low border-none pl-10 pr-md py-xs font-body-md text-body-md focus:outline-none" placeholder="Buscar por ID Ruta, Origen, Destino, Comuna, Región...">
+        <div class="flex flex-col md:flex-row gap-sm w-full md:w-auto items-stretch md:items-center">
+          <div class="relative w-full md:w-80 focus-within:ring-2 focus-within:ring-primary rounded overflow-hidden">
+            <span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-secondary">search</span>
+            <input type="text" id="route-search" class="w-full bg-surface-container-low border-none pl-10 pr-md py-xs font-body-md text-body-md focus:outline-none" placeholder="Buscar por ID Ruta, Origen, Destino, Comuna, Región...">
+          </div>
+          <select id="route-filter-origen" class="w-full md:w-48 bg-surface-container-low border-none px-md py-xs font-body-md text-body-md focus:outline-none rounded">
+            <option value="">Todos los orígenes</option>
+            ${GRUPOS_ORIGEN.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('')}
+          </select>
         </div>
 
         <div class="flex gap-sm w-full md:w-auto">
+          <button id="btn-export-routes-csv" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
+            <span class="material-symbols-outlined text-[18px]">download</span>
+            Exportar CSV
+          </button>
           <button id="btn-geo-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">my_location</span>
             Georreferenciar Rutas
@@ -414,9 +426,6 @@ function renderRutasSubview(container) {
     </div>
   `;
 
-  // Renderizar tabla
-  renderRoutesTable(routes);
-
   // --- Lógica de selects dependientes y autocompletado del formulario ---
   const origenSelectEl = document.getElementById('r-origen');
   const zonaSelectEl = document.getElementById('r-zona');
@@ -476,11 +485,16 @@ function renderRutasSubview(container) {
   latEl.addEventListener('input', actualizarGeorefStatus);
   lonEl.addEventListener('input', actualizarGeorefStatus);
 
-  // Buscador
+  // Buscador + filtros (Origen, Sin Georreferenciar)
   const searchInput = document.getElementById('route-search');
-  searchInput.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
-    const filtered = routes.filter(r =>
+  const origenFilterEl = document.getElementById('route-filter-origen');
+  origenFilterEl.value = currentFiltroOrigenRuta;
+
+  let lastFilteredRoutes = routes;
+
+  const applyRouteFilters = () => {
+    const term = searchInput.value.toLowerCase();
+    let filtered = routes.filter(r =>
       (r.codigo || '').toLowerCase().includes(term) ||
       (r.origen_grupo || '').toLowerCase().includes(term) ||
       (r.destino || '').toLowerCase().includes(term) ||
@@ -488,8 +502,70 @@ function renderRutasSubview(container) {
       (r.region || '').toLowerCase().includes(term) ||
       (r.id_zona_transporte || '').toLowerCase().includes(term)
     );
+    if (currentFiltroOrigenRuta) {
+      filtered = filtered.filter(r => r.origen_grupo === currentFiltroOrigenRuta);
+    }
+    if (currentFiltroSinGeoref) {
+      filtered = filtered.filter(r => !r.georef_estado);
+    }
+    lastFilteredRoutes = filtered;
     renderRoutesTable(filtered);
+    return filtered;
+  };
+
+  searchInput.addEventListener('input', applyRouteFilters);
+
+  origenFilterEl.addEventListener('change', () => {
+    currentFiltroOrigenRuta = origenFilterEl.value;
+    applyRouteFilters();
   });
+
+  // KPI "Sin Georreferenciar": al hacer click, filtra/des-filtra la tabla
+  const kpiSinGeoref = document.getElementById('kpi-sin-georef');
+  if (kpiSinGeoref) {
+    kpiSinGeoref.addEventListener('click', () => {
+      currentFiltroSinGeoref = !currentFiltroSinGeoref;
+      renderRutasSubview(container);
+    });
+  }
+
+  // Exportar tabla (filtrada) a CSV
+  document.getElementById('btn-export-routes-csv').addEventListener('click', () => {
+    const filtered = applyRouteFilters();
+    if (filtered.length === 0) {
+      showAlert('No hay rutas para exportar con los filtros actuales.', 'error');
+      return;
+    }
+    const headers = ['ID Ruta', 'Denominación', 'Origen', 'ID Zona', 'Destino', 'Comuna', 'Región', 'Tipo', 'Clasificación', 'KM', 'Estado ERP', 'Latitud', 'Longitud', 'Georreferencia', 'Vigencia'];
+    const csvRows = filtered.map(r => {
+      const tieneCoords = r.lat !== null && r.lat !== undefined && r.lon !== null && r.lon !== undefined;
+      let georefLabel = 'PENDIENTE';
+      if (r.georef_estado) georefLabel = 'OK';
+      else if (tieneCoords) georefLabel = 'REVISAR';
+      return [
+        r.codigo || '',
+        r.denominacion || '',
+        r.origen_grupo || '',
+        r.id_zona_transporte || '',
+        r.destino || '',
+        r.comuna || '',
+        r.region || '',
+        r.clasificRuta || '',
+        r.tipo || '',
+        r.km || '',
+        r.estado_erp ? 'EN ERP' : 'PENDIENTE',
+        (r.lat !== null && r.lat !== undefined) ? r.lat : '',
+        (r.lon !== null && r.lon !== undefined) ? r.lon : '',
+        georefLabel,
+        r.activo ? 'ACTIVO' : 'DE BAJA'
+      ];
+    });
+    const csv = toCSV(headers, csvRows);
+    downloadFile(`rutas_transporte_${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  });
+
+  // Renderizar tabla aplicando filtros persistidos (Origen / Sin Georreferenciar)
+  applyRouteFilters();
 
   // Modales
   const routeModal = document.getElementById('route-modal');
@@ -1047,6 +1123,9 @@ function renderRoutesTable(routesList) {
           <button class="btn-edit text-secondary hover:text-primary p-xs cursor-pointer" data-id="${r.id}" title="Editar ruta">
             <span class="material-symbols-outlined text-[20px]">edit</span>
           </button>
+          <button class="btn-refresh-geo text-secondary hover:text-primary p-xs cursor-pointer" data-id="${r.id}" title="Recalcular KM y Georreferencia">
+            <span class="material-symbols-outlined text-[20px]">my_location</span>
+          </button>
           <button class="btn-toggle text-secondary hover:text-primary p-xs cursor-pointer" data-id="${r.id}" title="${r.activo ? 'Dar de baja' : 'Activar'}">
             <span class="material-symbols-outlined text-[20px] ${r.activo ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}">
               ${r.activo ? 'block' : 'check_circle'}
@@ -1063,6 +1142,42 @@ function renderRoutesTable(routesList) {
 
   tbody.querySelectorAll('.btn-edit').forEach(btn => {
     btn.addEventListener('click', (e) => window.__openRouteEditModal(e.currentTarget.getAttribute('data-id')));
+  });
+
+  tbody.querySelectorAll('.btn-refresh-geo').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const id = e.currentTarget.getAttribute('data-id');
+      const db = getDatabase();
+      const r = db.routes.find(item => item.id === id);
+      if (!r) return;
+
+      const origenId = resolveOrigenIdFromGrupo(db, r.origen_grupo);
+      const cd = (db.logisticsCentres || []).find(c => c.id === origenId);
+      if (!cd || !cd.lat || !cd.lon) {
+        showAlert('El centro logístico de origen no tiene coordenadas GPS.', 'error');
+        return;
+      }
+
+      const icon = e.currentTarget.querySelector('.material-symbols-outlined');
+      icon.classList.add('animate-spin');
+      e.currentTarget.disabled = true;
+
+      try {
+        const destinoTexto = [r.destino, r.comuna, r.region].filter(Boolean).join(', ');
+        const { km, lat, lon } = await calcularDistanciaAuto(cd, destinoTexto);
+        r.km = km;
+        r.lat = lat;
+        r.lon = lon;
+        r.georef_estado = true;
+        saveDatabase(db);
+        showAlert(`Ruta ${r.codigo} actualizada: ${km} km.`);
+        renderRoutesView(document.getElementById('stage-area'));
+      } catch (err) {
+        showAlert('✗ ' + (err.message || 'No se pudo recalcular la ruta.'), 'error');
+        icon.classList.remove('animate-spin');
+        e.currentTarget.disabled = false;
+      }
+    });
   });
 
   tbody.querySelectorAll('.btn-toggle').forEach(btn => {

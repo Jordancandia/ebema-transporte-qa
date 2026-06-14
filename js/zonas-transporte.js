@@ -1,8 +1,10 @@
 import { getDatabase, saveDatabase } from './data.js';
-import { parseCSV, showAlert, escapeHtml } from './utils.js';
+import { parseCSV, showAlert, escapeHtml, toCSV, downloadFile } from './utils.js';
 import { REGIONES, COMUNAS_POR_REGION, TIPOS_ZONA, findRegionByComuna } from './chile-geo.js';
 
 let editingZonaId = null;
+let currentFiltroRegionZona = '';
+let currentFiltroIncompletasZona = false;
 
 // --- Normalización de datos para Carga Masiva (CSV) ---
 // Los archivos exportados desde Excel suelen traer encabezados en mayúsculas/distinta
@@ -149,24 +151,34 @@ export function renderZonasView(container) {
         </div>
         <span class="material-symbols-outlined text-[32px] text-red-500">pending</span>
       </div>
-      <div class="bg-surface border border-outline-variant p-md shadow-sm rounded border-l-4 border-amber-400 flex items-center justify-between">
+      <button type="button" id="kpi-zona-incompletas" class="bg-surface border ${currentFiltroIncompletasZona ? 'border-amber-500 ring-2 ring-amber-300' : 'border-outline-variant'} p-md shadow-sm rounded border-l-4 border-amber-400 flex items-center justify-between cursor-pointer text-left transition-all hover:shadow-md" title="Click para filtrar las zonas con datos pendientes">
         <div>
           <h4 class="font-label-caps text-label-caps text-secondary uppercase">Datos a Completar</h4>
           <div class="font-headline-md text-headline-md font-bold text-amber-600 mt-1">${incompletas}</div>
         </div>
         <span class="material-symbols-outlined text-[32px] text-amber-500">warning</span>
-      </div>
+      </button>
     </div>
 
     <!-- Tabla -->
     <div class="bg-surface border border-outline-variant rounded shadow-sm overflow-hidden">
       <div class="p-md border-b border-outline-variant flex flex-col md:flex-row justify-between items-center gap-md bg-white">
-        <div class="relative w-full md:w-96 focus-within:ring-2 focus-within:ring-primary rounded overflow-hidden">
-          <span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-secondary">search</span>
-          <input type="text" id="zona-search" class="w-full bg-surface-container-low border-none pl-10 pr-md py-xs font-body-md text-body-md focus:outline-none" placeholder="Buscar por Zona, Denominación, Comuna, Región...">
+        <div class="flex flex-col md:flex-row gap-sm w-full md:w-auto items-stretch md:items-center">
+          <div class="relative w-full md:w-80 focus-within:ring-2 focus-within:ring-primary rounded overflow-hidden">
+            <span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-secondary">search</span>
+            <input type="text" id="zona-search" class="w-full bg-surface-container-low border-none pl-10 pr-md py-xs font-body-md text-body-md focus:outline-none" placeholder="Buscar por Zona, Denominación, Comuna, Región...">
+          </div>
+          <select id="zona-filter-region" class="w-full md:w-56 bg-surface-container-low border-none px-md py-xs font-body-md text-body-md focus:outline-none rounded">
+            <option value="">Todas las regiones</option>
+            ${REGIONES.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('')}
+          </select>
         </div>
 
         <div class="flex gap-sm w-full md:w-auto">
+          <button id="btn-export-zonas-csv" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
+            <span class="material-symbols-outlined text-[18px]">download</span>
+            Exportar CSV
+          </button>
           <button id="btn-bulk-upload-zonas" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">upload_file</span>
             Carga Masiva (CSV)
@@ -318,8 +330,6 @@ export function renderZonasView(container) {
     </div>
   `;
 
-  renderZonasTable(zonas);
-
   // Selects dependientes Región -> Comuna
   const regionSelect = document.getElementById('z-region');
   const comunaSelect = document.getElementById('z-comuna');
@@ -340,18 +350,68 @@ export function renderZonasView(container) {
     }
   });
 
-  // Buscador
+  // Buscador + filtros (Región, Datos a Completar)
   const searchInput = document.getElementById('zona-search');
-  searchInput.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
-    const filtered = zonas.filter(z =>
+  const regionFilterEl = document.getElementById('zona-filter-region');
+  regionFilterEl.value = currentFiltroRegionZona;
+
+  const applyZonaFilters = () => {
+    const term = searchInput.value.toLowerCase();
+    let filtered = zonas.filter(z =>
       (z.zona || '').toLowerCase().includes(term) ||
       (z.denominacion || '').toLowerCase().includes(term) ||
       (z.comuna || '').toLowerCase().includes(term) ||
       (z.region || '').toLowerCase().includes(term)
     );
+    if (currentFiltroRegionZona) {
+      filtered = filtered.filter(z => z.region === currentFiltroRegionZona);
+    }
+    if (currentFiltroIncompletasZona) {
+      filtered = filtered.filter(zonaIncompleta);
+    }
     renderZonasTable(filtered);
+    return filtered;
+  };
+
+  searchInput.addEventListener('input', applyZonaFilters);
+
+  regionFilterEl.addEventListener('change', () => {
+    currentFiltroRegionZona = regionFilterEl.value;
+    applyZonaFilters();
   });
+
+  // KPI "Datos a Completar": al hacer click, filtra/des-filtra la tabla
+  const kpiIncompletas = document.getElementById('kpi-zona-incompletas');
+  if (kpiIncompletas) {
+    kpiIncompletas.addEventListener('click', () => {
+      currentFiltroIncompletasZona = !currentFiltroIncompletasZona;
+      renderZonasView(container);
+    });
+  }
+
+  // Exportar tabla (filtrada) a CSV
+  document.getElementById('btn-export-zonas-csv').addEventListener('click', () => {
+    const filtered = applyZonaFilters();
+    if (filtered.length === 0) {
+      showAlert('No hay zonas para exportar con los filtros actuales.', 'error');
+      return;
+    }
+    const headers = ['País', 'Zona', 'Denominación', 'Comuna', 'Región', 'Tipo', 'Estado ERP'];
+    const csvRows = filtered.map(z => [
+      z.pais || 'CL',
+      z.zona || '',
+      z.denominacion || '',
+      z.comuna || '',
+      z.region || '',
+      z.tipo || '',
+      z.estado_erp ? 'EN ERP' : 'PENDIENTE'
+    ]);
+    const csv = toCSV(headers, csvRows);
+    downloadFile(`zonas_transporte_${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  });
+
+  // Renderizar tabla aplicando filtros persistidos (Región / Datos a Completar)
+  applyZonaFilters();
 
   // Modal Crear/Editar
   const zonaModal = document.getElementById('zona-modal');
@@ -665,12 +725,8 @@ function renderZonasTable(zonasList) {
         z.estado_erp = !z.estado_erp;
         saveDatabase(db);
         showAlert(`La zona ${z.zona} fue marcada como ${z.estado_erp ? 'creada en ERP' : 'pendiente'}.`);
-        renderZonasTable((document.getElementById('zona-search').value)
-          ? db.transportZones.filter(item => {
-              const term = document.getElementById('zona-search').value.toLowerCase();
-              return (item.zona || '').toLowerCase().includes(term) || (item.denominacion || '').toLowerCase().includes(term);
-            })
-          : db.transportZones);
+        const subContent = document.getElementById('rutas-subview-content');
+        if (subContent) renderZonasView(subContent);
       }
     });
   });
@@ -685,7 +741,8 @@ function renderZonasTable(zonasList) {
         db.transportZones.splice(idx, 1);
         saveDatabase(db);
         showAlert(`La zona ${id} ha sido eliminada.`);
-        renderZonasTable(db.transportZones);
+        const subContent = document.getElementById('rutas-subview-content');
+        if (subContent) renderZonasView(subContent);
         // Refrescar KPIs
         const stageArea = document.getElementById('stage-area');
         if (stageArea) {
