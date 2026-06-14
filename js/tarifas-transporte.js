@@ -3,9 +3,15 @@
 // Variables Generales y Motor Actuarial (ZCAP) con exportación CSV.
 import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg } from './data.js';
 import { CAP_LIST, truckTypesWithCap, calcularMatrizCostos } from './tarifas-engine.js';
-import { formatCLP, parseCSV, showAlert, toCSV, downloadFile } from './utils.js';
+import { formatCLP, parseCSV, showAlert, toCSV, downloadFile, escapeHtml } from './utils.js';
+import { supabase } from './supabase-client.js';
 
 let activeSub = 'peajes';
+
+// Estado de filtros de la vista "Peajes por Ruta — Cálculo Automático"
+let pjFiltroTexto = '';
+let pjFiltroComuna = '';
+let pjFiltroPendientes = false;
 
 // ---------- Helpers genéricos ----------
 function setPath(obj, path, value) {
@@ -124,16 +130,353 @@ function subTabButton(key, icon, label) {
 // ============================================================
 // SUB-MÓDULO 1: PEAJES
 // ============================================================
+const EJES_LABELS = { 2: '2 Ejes (5 y 10 Ton)', 3: '3 Ejes (15 y 28 Ton)' };
+const PJ_DISPLAY_LIMIT = 500;
+
+function pjGetTollRow(db, routeId, ejes) {
+  return (db.routeTolls || []).find(rt => rt.route_id === routeId && Number(rt.ejes) === ejes);
+}
+
+function tollNumInput(routeId, ejes, field, value) {
+  return `<input type="number" step="any" class="${inputCls}" data-toll-route="${routeId}" data-toll-ejes="${ejes}" data-toll-field="${field}" value="${value ?? 0}">`;
+}
+
+// Vista combinada: cálculo automático (route_tolls) + registro manual (cfg.peajes)
 function renderPeajes(content, db, cfg) {
-  const routes = db.routes;
+  content.innerHTML = `<div id="pj-auto"></div><div id="pj-manual" class="mt-xl"></div>`;
+  renderPeajesAuto(document.getElementById('pj-auto'), db, cfg);
+  renderPeajesManual(document.getElementById('pj-manual'), db, cfg);
+}
+
+// ---------- Cálculo Automático de Peajes (Google Routes API) ----------
+function renderPeajesAuto(content, db, cfg) {
+  const routes = (db.routes || []).filter(r => r.activo);
+  const comunas = [...new Set(routes.map(r => r.comuna).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+  // Construir filas (ruta x tipo de eje)
+  let rows = [];
+  routes.forEach(ruta => {
+    [2, 3].forEach(ejes => {
+      rows.push({ ruta, ejes, toll: pjGetTollRow(db, ruta.id, ejes) });
+    });
+  });
+
+  // Aplicar filtros de pantalla
+  if (pjFiltroTexto.trim()) {
+    const q = pjFiltroTexto.trim().toLowerCase();
+    rows = rows.filter(r => (r.ruta.codigo || '').toLowerCase().includes(q) || (r.ruta.destino || '').toLowerCase().includes(q));
+  }
+  if (pjFiltroComuna) {
+    rows = rows.filter(r => r.ruta.comuna === pjFiltroComuna);
+  }
+  if (pjFiltroPendientes) {
+    rows = rows.filter(r => !r.toll || !r.toll.calculado_en || r.toll.needs_review);
+  }
+
+  const totalRows = rows.length;
+  const displayRows = rows.slice(0, PJ_DISPLAY_LIMIT);
+
+  let pendientesCount = 0;
+  routes.forEach(ruta => {
+    [2, 3].forEach(ejes => {
+      const t = pjGetTollRow(db, ruta.id, ejes);
+      if (!t || !t.calculado_en) pendientesCount++;
+    });
+  });
+  const revisionCount = (db.routeTolls || []).filter(t => t.needs_review).length;
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
       <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
         <span class="material-symbols-outlined text-primary">toll</span>
-        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Peajes por Ruta</h2>
+        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Peajes por Ruta — Cálculo Automático</h2>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Los cobros son simétricos (Ida y Vuelta procesan el mismo valor). Mapeo fijo de ejes: 5.000 y 10.000 kg = 2 ejes · 15.000 y 28.000 kg = 3 ejes.</p>
+      <p class="text-[12px] text-secondary mb-md">
+        Calcula el costo de peaje de Ida y Vuelta de cada ruta vía Google Routes API, según el tipo de camión
+        (2 ejes: 5 y 10 Ton · 3 ejes: 15 y 28 Ton). El cálculo se ejecuta a demanda y queda registrado para no
+        repetirse. Las rutas sin peaje quedan en $0; las rutas donde se detectó un peaje sin valor disponible
+        quedan marcadas <b>Para revisión</b> y todos los valores son editables manualmente.
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-md mb-md">
+        <div class="bg-surface-container-low p-md rounded">
+          <p class="font-label-caps text-label-caps text-secondary">Rutas Activas</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${routes.length}</p>
+        </div>
+        <div class="bg-surface-container-low p-md rounded">
+          <p class="font-label-caps text-label-caps text-secondary">Combinaciones (Ruta × Tipo Camión)</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${routes.length * 2}</p>
+        </div>
+        <button id="pj-kpi-pendientes" class="bg-surface-container-low p-md rounded text-left hover:bg-secondary-container transition-colors">
+          <p class="font-label-caps text-label-caps text-secondary">Sin Calcular</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${pendientesCount}</p>
+        </button>
+        <button id="pj-kpi-revision" class="bg-surface-container-low p-md rounded text-left hover:bg-secondary-container transition-colors">
+          <p class="font-label-caps text-label-caps text-secondary">Para Revisión</p>
+          <p class="font-headline-sm text-headline-sm font-bold ${revisionCount > 0 ? 'text-primary' : 'text-on-surface'}">${revisionCount}</p>
+        </button>
+      </div>
+
+      <div class="flex flex-wrap gap-sm items-end mb-md">
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">BUSCAR RUTA</label>
+          <input id="pj-f-texto" type="text" placeholder="Código o destino..." value="${escapeHtml(pjFiltroTexto)}" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-56">
+        </div>
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">COMUNA</label>
+          <select id="pj-f-comuna" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48">
+            <option value="">Todas</option>
+            ${comunas.map(c => `<option value="${escapeHtml(c)}" ${c === pjFiltroComuna ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary flex items-center gap-xs cursor-pointer">
+            <input type="checkbox" id="pj-f-pend" ${pjFiltroPendientes ? 'checked' : ''}> SOLO PENDIENTES / REVISIÓN
+          </label>
+        </div>
+        <div class="flex-1"></div>
+        <button id="pj-export" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
+        </button>
+        <button id="pj-calcular" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">calculate</span> Calcular Peajes
+        </button>
+      </div>
+
+      <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
+        <table class="w-full zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Origen</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Destino</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo de Camión</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peaje Ida</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peaje Vuelta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Ida</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Vuelta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Estado</th>
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            ${displayRows.length === 0 ? `<tr><td colspan="9" class="p-md text-center text-secondary">No hay rutas que coincidan con los filtros.</td></tr>` :
+              displayRows.map(({ ruta, ejes, toll }) => {
+                const origenNombre = getCentreName(db, ruta.origenId);
+                let estado;
+                if (!toll || !toll.calculado_en) {
+                  estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN CALCULAR</span>`;
+                } else if (toll.needs_review) {
+                  estado = `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]"><span class="material-symbols-outlined text-[14px]">warning</span> REVISIÓN</span>`;
+                } else {
+                  estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 font-label-caps text-[10px]">OK</span>`;
+                }
+                const trCls = toll && toll.needs_review ? 'border-b border-outline-variant bg-red-50' : 'border-b border-outline-variant';
+                return `<tr class="${trCls}">
+                  <td class="p-md font-bold">${escapeHtml(ruta.codigo || '')}</td>
+                  <td class="p-md">${escapeHtml(origenNombre || '')}</td>
+                  <td class="p-md">${escapeHtml(ruta.destino || '')}</td>
+                  <td class="p-md">${EJES_LABELS[ejes]}</td>
+                  <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_ida', toll ? toll.peaje_ida : 0)}</td>
+                  <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_vuelta', toll ? toll.peaje_vuelta : 0)}</td>
+                  <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_ida != null ? toll.km_ida : '—'}</td>
+                  <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_vuelta != null ? toll.km_vuelta : '—'}</td>
+                  <td class="p-md text-center">${estado}</td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${totalRows > PJ_DISPLAY_LIMIT ? `<p class="text-[11px] text-secondary mt-sm">Mostrando ${PJ_DISPLAY_LIMIT} de ${totalRows} resultados. Use los filtros para acotar la búsqueda.</p>` : ''}
+    </div>
+  `;
+
+  content.querySelectorAll('[data-toll-route]').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const routeId = e.target.dataset.tollRoute;
+      const ejes = Number(e.target.dataset.tollEjes);
+      const field = e.target.dataset.tollField;
+      const val = e.target.value === '' ? 0 : Number(e.target.value);
+      let row = pjGetTollRow(db, routeId, ejes);
+      if (!row) {
+        row = { id: `tj_${routeId}_${ejes}`, route_id: routeId, ejes, peaje_ida: 0, peaje_vuelta: 0, needs_review: false, calculado_en: new Date().toISOString() };
+        db.routeTolls = db.routeTolls || [];
+        db.routeTolls.push(row);
+      }
+      row[field] = val;
+      row.needs_review = false; // edición manual = revisado
+      row.updated_at = new Date().toISOString();
+      saveDatabase(db);
+    });
+  });
+
+  document.getElementById('pj-f-texto').addEventListener('change', (e) => { pjFiltroTexto = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-export').addEventListener('click', () => exportPeajesCSV(db, rows));
+  document.getElementById('pj-calcular').addEventListener('click', () => {
+    const rutasUnicas = [...new Set(rows.map(r => r.ruta))];
+    calcularPeajes(content, db, cfg, rutasUnicas);
+  });
+}
+
+function exportPeajesCSV(db, rows) {
+  const headers = ['RUTA', 'ORIGEN', 'DESTINO', 'TIPO_DE_CAMION', 'PEAJE_IDA', 'PEAJE_VUELTA'];
+  const data = rows.map(({ ruta, ejes, toll }) => [
+    ruta.codigo,
+    getCentreName(db, ruta.origenId) || '',
+    ruta.destino || '',
+    EJES_LABELS[ejes],
+    toll ? Math.round(toll.peaje_ida || 0) : 0,
+    toll ? Math.round(toll.peaje_vuelta || 0) : 0
+  ]);
+  downloadFile(`peajes_rutas_${Date.now()}.csv`, toCSV(headers, data));
+  showAlert('Archivo CSV de peajes exportado');
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Invoca la Edge Function 'route-tolls' (proxy seguro hacia Google Routes API)
+async function callRouteTolls(origin, destination) {
+  const { data, error } = await supabase.functions.invoke('route-tolls', { body: { origin, destination } });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+
+// Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
+// de ida/vuelta. Si opts.error, marca la fila para revisión sin tocar valores.
+function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
+  db.routeTolls = db.routeTolls || [];
+  let row = db.routeTolls.find(rt => rt.route_id === routeId && Number(rt.ejes) === ejes);
+  if (!row) {
+    row = { id: `tj_${routeId}_${ejes}`, route_id: routeId, ejes, peaje_ida: 0, peaje_vuelta: 0, needs_review: false };
+    db.routeTolls.push(row);
+  }
+  const now = new Date().toISOString();
+  if (opts.error) {
+    row.needs_review = true;
+    row.calculado_en = now;
+    row.updated_at = now;
+    return row;
+  }
+  row.peaje_ida = ida ? Math.round(ida.tollCLP || 0) : 0;
+  row.peaje_vuelta = vuelta ? Math.round(vuelta.tollCLP || 0) : 0;
+  row.km_ida = ida && ida.distanceMeters != null ? Math.round(ida.distanceMeters / 100) / 10 : null;
+  row.km_vuelta = vuelta && vuelta.distanceMeters != null ? Math.round(vuelta.distanceMeters / 100) / 10 : null;
+  const idaReview = !ida || (ida.hasToll && !ida.tollCLP);
+  const vueltaReview = !vuelta || (vuelta.hasToll && !vuelta.tollCLP);
+  row.needs_review = !!(idaReview || vueltaReview);
+  row.calculado_en = now;
+  row.updated_at = now;
+  return row;
+}
+
+// Modal de progreso para el cálculo masivo de peajes
+function createProgressModal(total) {
+  const el = document.createElement('div');
+  el.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center';
+  el.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl p-lg w-full max-w-md">
+      <div class="flex items-center gap-sm mb-md">
+        <span class="material-symbols-outlined text-primary">toll</span>
+        <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface">Calculando Peajes…</h3>
+      </div>
+      <p id="ptj-status" class="text-[12px] text-secondary mb-sm break-all">Iniciando…</p>
+      <div class="w-full bg-surface-container-high rounded-full h-3 overflow-hidden mb-sm">
+        <div id="ptj-bar" class="bg-primary h-3 rounded-full transition-all" style="width:0%"></div>
+      </div>
+      <p id="ptj-count" class="text-[11px] text-secondary text-right mb-md">0 / ${total}</p>
+      <button id="ptj-cancel" class="w-full bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded text-[12px] uppercase">Cancelar</button>
+    </div>`;
+  document.body.appendChild(el);
+  return {
+    cancelBtn: el.querySelector('#ptj-cancel'),
+    update(i, total, label) {
+      el.querySelector('#ptj-status').textContent = label;
+      el.querySelector('#ptj-count').textContent = `${i} / ${total}`;
+      el.querySelector('#ptj-bar').style.width = `${total > 0 ? Math.round((i / total) * 100) : 0}%`;
+    },
+    close() { el.remove(); }
+  };
+}
+
+// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas: para
+// cada ruta consulta la Edge Function 'route-tolls' Ida y Vuelta (0.5s de
+// espera entre consultas) y guarda el resultado para 2 y 3 ejes.
+async function calcularPeajes(content, db, cfg, rutas) {
+  if (!rutas || rutas.length === 0) {
+    showAlert('No hay rutas para calcular con los filtros actuales', 'error');
+    return;
+  }
+  const targets = rutas.filter(r => r.lat != null && r.lon != null);
+  const sinCoords = rutas.length - targets.length;
+  const estMin = Math.max(1, Math.ceil((targets.length * 2 * 0.5) / 60));
+  const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
+  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) (Ida + Vuelta, 2 y 3 ejes).\nTiempo estimado: ~${estMin} min.${aviso}\n¿Continuar?`)) {
+    return;
+  }
+
+  // Rutas sin coordenadas: marcar directamente para revisión
+  rutas.filter(r => r.lat == null || r.lon == null).forEach(ruta => {
+    [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
+  });
+
+  const modal = createProgressModal(targets.length);
+  let cancelado = false;
+  modal.cancelBtn.addEventListener('click', () => { cancelado = true; });
+
+  for (let i = 0; i < targets.length; i++) {
+    if (cancelado) break;
+    const ruta = targets[i];
+    const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
+    modal.update(i, targets.length, `${ruta.codigo} — ${ruta.destino || ''}`);
+
+    if (!cd || cd.lat == null || cd.lon == null) {
+      [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
+      continue;
+    }
+
+    const origenPt = { lat: cd.lat, lng: cd.lon };
+    const destinoPt = { lat: ruta.lat, lng: ruta.lon };
+
+    let ida = null, vuelta = null, errored = false;
+    try {
+      ida = await callRouteTolls(origenPt, destinoPt);
+      await sleep(500);
+      vuelta = await callRouteTolls(destinoPt, origenPt);
+      await sleep(500);
+    } catch (err) {
+      console.error('Error calculando peajes para', ruta.codigo, err);
+      errored = true;
+    }
+
+    [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored }));
+
+    if ((i + 1) % 10 === 0) saveDatabase(db);
+  }
+
+  modal.update(targets.length, targets.length, cancelado ? 'Cancelado' : 'Finalizado');
+  saveDatabase(db);
+  modal.close();
+  showAlert(cancelado ? 'Cálculo de peajes cancelado (avance guardado)' : 'Cálculo de peajes finalizado');
+  renderPeajesAuto(content, db, cfg);
+}
+
+// ---------- Registro Manual de Plazas de Peaje (legado / respaldo) ----------
+function renderPeajesManual(content, db, cfg) {
+  const routes = db.routes;
+
+  content.innerHTML = `
+    <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
+      <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
+        <span class="material-symbols-outlined text-primary">edit_road</span>
+        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Registro Manual de Plazas de Peaje (Respaldo)</h2>
+      </div>
+      <p class="text-[12px] text-secondary mb-md">Este registro detallado por plaza de peaje se usa como respaldo del Motor ZCAP solo cuando una ruta no tiene un cálculo automático (sección anterior). Los cobros aquí son simétricos (Ida y Vuelta procesan el mismo valor). Mapeo fijo de ejes: 5.000 y 10.000 kg = 2 ejes · 15.000 y 28.000 kg = 3 ejes.</p>
 
       <form id="pj-form" class="grid grid-cols-1 md:grid-cols-6 gap-sm items-end mb-md">
         <div class="md:col-span-2 space-y-xs">
@@ -227,14 +570,14 @@ function renderPeajes(content, db, cfg) {
     });
     saveDatabase(db);
     showAlert('Peaje agregado correctamente');
-    renderPeajes(content, db, cfg);
+    renderPeajesManual(content, db, cfg);
   });
 
   document.querySelectorAll('.pj-del').forEach(btn => {
     btn.addEventListener('click', () => {
       cfg.peajes = cfg.peajes.filter(p => p.id !== btn.dataset.id);
       saveDatabase(db);
-      renderPeajes(content, db, cfg);
+      renderPeajesManual(content, db, cfg);
     });
   });
 
@@ -260,7 +603,7 @@ function renderPeajes(content, db, cfg) {
       });
       saveDatabase(db);
       showAlert(`${count} peajes cargados desde CSV`);
-      renderPeajes(content, db, cfg);
+      renderPeajesManual(content, db, cfg);
     });
   });
 }

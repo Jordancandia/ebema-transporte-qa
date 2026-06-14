@@ -23,11 +23,21 @@ export function calcularCostoRuta(db, cfg, ruta, capKg) {
   const capKey = String(capKg);
   const kmKey = `${centroId}|${capKey}`;
 
-  // --- 1. Peajes (simétrico ida/vuelta, según ejes del camión) ---
+  // --- 1. Peajes (según ejes del camión: 2 ó 3) ---
+  // Prioridad: route_tolls (cálculo automático vía Google Routes API, ida/vuelta
+  // independientes). Si la ruta no tiene cálculo registrado, se usa el respaldo
+  // del registro manual de plazas de peaje (cfg.peajes, simétrico ida/vuelta).
   const ejes = cfg.ejes[capKey] || 2;
-  const peajesRuta = (cfg.peajes || []).filter(p => p.rutaId === ruta.id && Number(p.ejes) === ejes);
-  const peajeIda = peajesRuta.reduce((s, p) => s + (Number(p.valorPeaje) || 0), 0);
-  const peajeVuelta = peajeIda;
+  const tollRow = (db.routeTolls || []).find(rt => rt.route_id === ruta.id && Number(rt.ejes) === ejes);
+  let peajeIda, peajeVuelta;
+  if (tollRow) {
+    peajeIda = Number(tollRow.peaje_ida) || 0;
+    peajeVuelta = Number(tollRow.peaje_vuelta) || 0;
+  } else {
+    const peajesRuta = (cfg.peajes || []).filter(p => p.rutaId === ruta.id && Number(p.ejes) === ejes);
+    peajeIda = peajesRuta.reduce((s, p) => s + (Number(p.valorPeaje) || 0), 0);
+    peajeVuelta = peajeIda;
+  }
   const item1_peajes = peajeIda + peajeVuelta;
 
   // --- 2. Combustible (cargado ida + vacío vuelta) ---
