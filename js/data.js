@@ -174,17 +174,35 @@ export function defaultClientTariffConfig() {
 
 let memoryDb = null;
 
+// Obtener TODAS las filas de una tabla, paginando de a PAGE_SIZE
+// (PostgREST limita cada respuesta a un máximo de filas, por defecto 1000;
+// sin esto, tablas grandes como "routes" se truncarían silenciosamente).
+const PAGE_SIZE = 1000;
+async function fetchAllRows(table) {
+  let from = 0;
+  let all = [];
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 // Cargar TODO desde Supabase a memoria (llamar tras iniciar sesión)
 export async function initDatabase() {
   try {
     const results = await Promise.all(
-      TABLE_MAP.map(t => supabase.from(t.table).select('*'))
+      TABLE_MAP.map(t => fetchAllRows(t.table))
     );
-    const failed = results.find(r => r.error);
-    if (failed) throw failed.error;
 
     memoryDb = {};
-    TABLE_MAP.forEach((t, i) => { memoryDb[t.local] = results[i].data || []; });
+    TABLE_MAP.forEach((t, i) => { memoryDb[t.local] = results[i] || []; });
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryDb));
     return memoryDb;
