@@ -86,4 +86,11 @@ module.exports = {
         "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
         "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
         "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
-        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeigh
+        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+      }
+    },
+  },
+  plugins: [
+    require('@tailwindcss/forms'),
+  ],
+}
