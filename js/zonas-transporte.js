@@ -4,6 +4,96 @@ import { REGIONES, COMUNAS_POR_REGION, TIPOS_ZONA, findRegionByComuna } from './
 
 let editingZonaId = null;
 
+// --- Normalización de datos para Carga Masiva (CSV) ---
+// Los archivos exportados desde Excel suelen traer encabezados en mayúsculas/distinta
+// capitalización, sin tildes o con codificación incorrecta (Windows-1252/ISO-8859-1).
+// Estas utilidades permiten reconocer las columnas y valores sin importar el formato.
+
+// Normaliza una clave de columna: sin tildes, minúsculas, sin espacios ni símbolos.
+// "País" / "PAIS" / "Pa�s" -> "pais"
+function normalizeKey(s) {
+  return s.toString()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Normaliza un texto para comparación: sin tildes, minúsculas, espacios simples.
+function normalizeText(s) {
+  return s.toString()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Busca el valor de una columna del CSV sin importar mayúsculas/tildes/espacios.
+function getField(row, ...names) {
+  const normalizedRow = {};
+  Object.keys(row).forEach(k => { normalizedRow[normalizeKey(k)] = row[k]; });
+  for (const name of names) {
+    const key = normalizeKey(name);
+    if (normalizedRow[key] !== undefined) return normalizedRow[key];
+  }
+  return '';
+}
+
+// Alias de nombres de regiones (formato "REGION DE X" / "REGION DEL X" / sin tildes)
+// hacia el formato estándar usado en chile-geo.js
+const REGION_ALIASES = {
+  'arica y parinacota': 'Arica y Parinacota',
+  'tarapaca': 'Tarapacá',
+  'antofagasta': 'Antofagasta',
+  'atacama': 'Atacama',
+  'coquimbo': 'Coquimbo',
+  'valparaiso': 'Valparaíso',
+  'metropolitana de santiago': 'Metropolitana de Santiago',
+  'metropolitana': 'Metropolitana de Santiago',
+  'libertador general bernardo ohiggins': "Libertador General Bernardo O'Higgins",
+  'ohiggins': "Libertador General Bernardo O'Higgins",
+  'maule': 'Maule',
+  'nuble': 'Ñuble',
+  'biobio': 'Biobío',
+  'la araucania': 'La Araucanía',
+  'araucania': 'La Araucanía',
+  'los rios': 'Los Ríos',
+  'los lagos': 'Los Lagos',
+  'aysen': 'Aysén',
+  'magallanes y de la antartica chilena': 'Magallanes y de la Antártica Chilena',
+  'magallanes y antartica chilena': 'Magallanes y de la Antártica Chilena'
+};
+
+// Convierte un nombre de región en cualquier formato (ej. "REGION DE LOS RIOS")
+// al nombre estándar usado por la plataforma (ej. "Los Ríos")
+function normalizeRegionName(raw) {
+  if (!raw) return '';
+  let s = normalizeText(raw);
+  s = s.replace(/^region\s+(del|de)\s+/, '').replace(/^region\s+/, '');
+  if (REGION_ALIASES[s]) return REGION_ALIASES[s];
+  for (const key of Object.keys(REGION_ALIASES)) {
+    if (s.startsWith(key)) return REGION_ALIASES[key];
+  }
+  const direct = REGIONES.find(r => normalizeText(r) === s);
+  if (direct) return direct;
+  return raw;
+}
+
+// Mapa de comunas normalizadas -> { comuna estándar, región } para reconocer
+// comunas escritas en mayúsculas/sin tildes y completar la región si falta.
+const COMUNA_LOOKUP = {};
+Object.entries(COMUNAS_POR_REGION).forEach(([region, comunas]) => {
+  comunas.forEach(c => {
+    COMUNA_LOOKUP[normalizeText(c)] = { comuna: c, region };
+  });
+});
+
+function standardizeComuna(rawComuna) {
+  if (!rawComuna) return { comuna: '', region: '' };
+  const match = COMUNA_LOOKUP[normalizeText(rawComuna)];
+  if (match) return match;
+  return { comuna: rawComuna, region: '' };
+}
+
 // Indica si a una zona le falta completar Comuna, Región o Tipo
 function zonaIncompleta(z) {
   return !z.comuna || !z.region || !z.tipo;
@@ -381,7 +471,15 @@ export function renderZonasView(container) {
   function handleCsvZonaFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-      const rows = parseCSV(e.target.result);
+      const buffer = e.target.result;
+      let text = new TextDecoder('utf-8').decode(buffer);
+      // Los archivos exportados desde Excel suelen venir en Windows-1252/ISO-8859-1.
+      // Si la decodificación UTF-8 produce caracteres de reemplazo (�) en tildes/ñ,
+      // se reintenta con Windows-1252.
+      if (text.includes('�')) {
+        text = new TextDecoder('windows-1252').decode(buffer);
+      }
+      const rows = parseCSV(text);
       if (rows.length === 0) {
         showAlert('El archivo CSV está vacío o no tiene el formato correcto.', 'error');
         return;
@@ -395,18 +493,24 @@ export function renderZonasView(container) {
       const seen = new Set();
 
       rows.forEach(row => {
-        const pais = (row.pais || row['país'] || 'CL').trim().toUpperCase();
-        const zona = (row.zona || '').trim().toUpperCase();
-        const denominacion = (row.denominacion || row['denominación'] || '').trim();
-        const comuna = (row.comuna || '').trim();
-        let region = (row.region || row['región'] || '').trim();
-        let tipo = (row.tipo || '').trim();
+        const pais = (getField(row, 'pais', 'país') || 'CL').trim().toUpperCase() || 'CL';
+        const zona = (getField(row, 'zona', 'idzona', 'id zona') || '').trim().toUpperCase();
+        const denominacion = (getField(row, 'denominacion', 'denominación') || '').trim();
+        let comuna = (getField(row, 'comuna') || '').trim();
+        let region = normalizeRegionName((getField(row, 'region', 'región') || '').trim());
+        let tipo = (getField(row, 'tipo') || '').trim();
         tipo = TIPOS_ZONA.find(t => t.toLowerCase() === tipo.toLowerCase()) || '';
-        const estadoRaw = (row.estado || row.estado_erp || '').trim().toLowerCase();
+        const estadoRaw = (getField(row, 'estado', 'estado_erp', 'estadoerp') || '').trim().toLowerCase();
         const estado_erp = ['si', 'sí', 'true', '1', 'creada', 'erp'].includes(estadoRaw);
 
-        // Si falta región pero la comuna es estándar, se infiere automáticamente
-        if (!region && comuna) region = findRegionByComuna(comuna);
+        // Estandarizar nombre de comuna (mayúsculas/sin tildes) e inferir región si falta
+        if (comuna) {
+          const std = standardizeComuna(comuna);
+          comuna = std.comuna;
+          if (!region && std.region) region = std.region;
+        }
+        // Si aún falta región pero la comuna estándar la define, se infiere
+        if (!region && comuna) region = findRegionByComuna(comuna) || '';
 
         let error = '';
         if (!pais) error = 'Falta País';
@@ -451,7 +555,7 @@ export function renderZonasView(container) {
         showAlert('No se encontraron registros de zonas válidos.', 'error');
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   }
 
   btnConfirmBulk.addEventListener('click', () => {
