@@ -723,4 +723,113 @@ function renderVariables(content, db, cfg) {
         <table class="w-full zebra-table border-collapse">
           <thead>
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-           
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ítem</th>
+              ${CAP_LIST.map(cap => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">${(cap / 1000)}.000 kg</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            <tr class="border-b border-outline-variant">
+              <td class="p-md font-bold">Costo Base Fijo</td>
+              ${CAP_LIST.map(cap => `<td class="p-md w-32">${numInput(`variables.costosBase.${cap}.fijo`, v.costosBase[cap].fijo)}</td>`).join('')}
+            </tr>
+            <tr class="border-b border-outline-variant">
+              <td class="p-md font-bold">KM Base Adicional (Hasta 50KM)</td>
+              ${CAP_LIST.map(cap => `<td class="p-md w-32">${numInput(`variables.costosBase.${cap}.kmAdicional`, v.costosBase[cap].kmAdicional)}</td>`).join('')}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('km-csv').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    readCSVFile(file, (rows) => {
+      let count = 0;
+      rows.forEach(row => {
+        const cd = centres.find(c => c.id === (row.Centro_SAP || '').trim());
+        const cap = parseCapKgFromCSV(row.Tipo_Camion_Kg);
+        if (!cd || !CAP_LIST.includes(cap)) return;
+        cfg.kmOfrecidos[`${cd.id}|${cap}`] = Number(row.KM_Mensual) || 0;
+        count++;
+      });
+      saveDatabase(db);
+      showAlert(`${count} registros de KM Mensuales actualizados`);
+      renderVariables(content, db, cfg);
+    });
+  });
+}
+
+// ============================================================
+// MOTOR ACTUARIAL: RESULTADOS Y EXPORTACIÓN
+// ============================================================
+function renderResultados(content, db, cfg) {
+  const matriz = calcularMatrizCostos(db, cfg);
+
+  content.innerHTML = `
+    <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
+      <div class="flex items-center justify-between mb-md border-b border-outline-variant pb-sm">
+        <div class="flex items-center gap-sm">
+          <span class="material-symbols-outlined text-primary">calculate</span>
+          <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Motor Actuarial — Resultados ZCAP</h2>
+        </div>
+        <button id="zcap-export" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-sm text-xs uppercase">
+          <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
+        </button>
+      </div>
+      <p class="text-[12px] text-secondary mb-md">Calculado para todas las rutas activas y los 4 tipos de camión, según las variables configuradas en los sub-módulos anteriores.</p>
+
+      <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
+        <table class="w-full zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Camión</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Ejes</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peajes</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Combustible</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Ruta Total</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo/KM Final</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right bg-primary/5">ZCAP</th>
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            ${matriz.map(m => `
+              <tr class="border-b border-outline-variant">
+                <td class="p-md">${getCentreName(db, m.centroId)}</td>
+                <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
+                <td class="p-md">${m.truckType.type}</td>
+                <td class="p-md text-center font-data-mono text-data-mono">${m.ejes}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item11_costoKmFinal)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono font-bold bg-primary/5">${formatCLP(m.zcap)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('zcap-export').addEventListener('click', () => {
+    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
+    const rows = matriz.map(m => {
+      const cd = db.logisticsCentres.find(c => c.id === m.centroId);
+      return [
+        cd ? cd.id : m.centroId,
+        m.ruta.codigo,
+        m.ruta.destino,
+        m.truckType.capKg,
+        m.ejes,
+        Math.round(m.item11_costoKmFinal)
+      ];
+    });
+    downloadFile(`zcap_transporte_${Date.now()}.csv`, toCSV(headers, rows));
+    showAlert('Archivo CSV de costos de transporte exportado');
+  });
+}

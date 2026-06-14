@@ -444,4 +444,220 @@ export function renderRatesView(container) {
     updateFleetMap();
   });
 
-  inpDestino.addEventListener('input
+  inpDestino.addEventListener('input', () => {
+    consultarRuta();
+    calculatePrice();
+    clearTimeout(geocodeTimeout);
+    geocodeTimeout = setTimeout(updateFleetMap, 800);
+  });
+
+  function consultarRuta() {
+    const origenId = selOrigen.value;
+    const destinoVal = inpDestino.value.trim();
+    activeRoute = null;
+    routePending = false;
+
+    if (!origenId || !destinoVal) {
+      resetRouteInfo();
+      return;
+    }
+
+    const match = routes.find(r =>
+      r.origenId === origenId &&
+      r.destino.trim().toLowerCase() === destinoVal.toLowerCase()
+    );
+
+    sumDestino.textContent = destinoVal;
+
+    if (match) {
+      activeRoute = match;
+      rutaCodigo.textContent = match.codigo;
+      txtDistancia.textContent = `${match.km} KM`;
+      sumDistancia.textContent = `${match.km} KM`;
+      rutaEstado.textContent = 'RUTA CREADA';
+      rutaInd.className = 'w-3 h-3 rounded-full bg-[#28a745]';
+      sumRuta.textContent = match.codigo;
+      sumRuta.className = 'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-800';
+    } else {
+      routePending = true;
+      rutaCodigo.textContent = '—';
+      // Si ya se cotizó este mismo origen/destino antes, reutilizar la distancia cacheada
+      const cached = findCachedQuote(origenId, destinoVal);
+      const kmEstimado = cached && cached.km ? cached.km : 0;
+      txtDistancia.textContent = `${kmEstimado} KM`;
+      sumDistancia.textContent = `${kmEstimado} KM`;
+      rutaEstado.textContent = 'PENDIENTE DE CREACIÓN';
+      rutaInd.className = 'w-3 h-3 rounded-full bg-[#f59e0b]';
+      sumRuta.textContent = 'RUTA NO CREADA';
+      sumRuta.className = 'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800';
+    }
+  }
+
+  function resetRouteInfo() {
+    activeRoute = null;
+    routePending = false;
+    rutaCodigo.textContent = '—';
+    txtDistancia.textContent = '0 KM';
+    rutaEstado.textContent = 'Sin consultar';
+    rutaInd.className = 'w-3 h-3 rounded-full bg-secondary';
+    sumDestino.textContent = 'Seleccione destino';
+    sumDistancia.textContent = '0.0 KM';
+    sumRuta.textContent = '—';
+    sumRuta.className = 'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-surface-container-high text-secondary';
+  }
+
+  // Tipo de servicio
+  document.querySelectorAll('input[name="q-servicio"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      servicio = e.target.value;
+      if (servicio === 'exclusivo') {
+        blockExclusivo.classList.remove('hidden');
+        blockConsolidado.classList.add('hidden');
+        lblExclusivo.className = 'flex items-center gap-sm border-2 border-primary bg-primary/5 p-md rounded-lg cursor-pointer transition-all';
+        lblConsolidado.className = 'flex items-center gap-sm border-2 border-outline-variant p-md rounded-lg cursor-pointer transition-all';
+      } else {
+        blockExclusivo.classList.add('hidden');
+        blockConsolidado.classList.remove('hidden');
+        lblConsolidado.className = 'flex items-center gap-sm border-2 border-primary bg-primary/5 p-md rounded-lg cursor-pointer transition-all';
+        lblExclusivo.className = 'flex items-center gap-sm border-2 border-outline-variant p-md rounded-lg cursor-pointer transition-all';
+      }
+      calculatePrice();
+    });
+  });
+
+  selVehiculo.addEventListener('change', calculatePrice);
+  inpKilos.addEventListener('input', calculatePrice);
+
+  // --- CÁLCULO DE TARIFA ---
+  function calculatePrice() {
+    let precio = 0;
+    let refCapKg = null;
+
+    if (activeRoute) {
+      const km = Number(activeRoute.km);
+      const origenId = selOrigen.value;
+      // Tarifas vigentes para el centro de origen de la ruta activa
+      const tarifasCentro = truckTypes.filter(t => t.Id_centro === origenId);
+
+      if (servicio === 'exclusivo') {
+        const truck = tarifasCentro.find(t => t.type === selVehiculo.value);
+        if (truck) {
+          precio = Number(truck.baseRate) + (km * Number(truck.ratePerKm));
+          sumVehiculo.textContent = truck.type;
+          refCapKg = truckCapKg(truck.type);
+        } else {
+          sumVehiculo.textContent = 'Seleccione camión';
+        }
+      } else {
+        const kilos = Number(inpKilos.value) || 0;
+        if (kilos > 0 && tarifasCentro.length > 0) {
+          // Tarifa consolidada: prorrateo sobre el camión de mayor capacidad (28 Ton)
+          const ref = tarifasCentro.reduce((a, b) => (Number(a.baseRate) > Number(b.baseRate) ? a : b));
+          const total28 = Number(ref.baseRate) + (km * Number(ref.ratePerKm));
+          precio = Math.max(25000, Math.round(total28 * (Math.min(kilos, 28000) / 28000)));
+          sumVehiculo.textContent = `Consolidado · ${kilos.toLocaleString('es-CL')} kg`;
+          refCapKg = 28000;
+        } else {
+          sumVehiculo.textContent = 'Ingrese kilos';
+        }
+      }
+    } else {
+      sumVehiculo.textContent = routePending ? 'Ruta pendiente de creación' : 'Seleccione servicio';
+    }
+
+    sumPrecio.textContent = precio > 0 ? formatCLP(precio) : '$0 CLP';
+    updateZfmReference(refCapKg);
+
+    // Guardar/actualizar la cotización en el caché de las últimas 10 del perfil,
+    // para evitar volver a consultar la misma ruta (origen/destino) más adelante.
+    const origenId = selOrigen.value;
+    const destinoVal = inpDestino.value.trim();
+    if (precio > 0 && origenId && destinoVal) {
+      upsertRecentQuote({
+        fecha: new Date().toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' }),
+        origenId,
+        origen: getCentreName(db, origenId),
+        destino: destinoVal,
+        vehiculo: sumVehiculo.textContent,
+        estado: activeRoute ? 'RUTA CREADA' : 'RUTA NO CREADA',
+        monto: precio,
+        km: activeRoute ? Number(activeRoute.km) : (findCachedQuote(origenId, destinoVal)?.km || 0),
+        lat: lastDestCoords ? lastDestCoords.lat : null,
+        lon: lastDestCoords ? lastDestCoords.lon : null
+      });
+      renderHistoryTable(loadRecentQuotes());
+    }
+  }
+
+  // --- REFERENCIA TARIFA CLIENTE (ZFMI/ZFMP/ZFMX) ---
+  // Muestra, a modo de referencia para el agente comercial, el rango de tarifa
+  // calculado por el Motor ZCAP / Tarifa Cliente para la ruta y camión actuales.
+  // No reemplaza ni altera el VALOR NETO mostrado (basado en Tarifa Base/Tarifa-KM).
+  function updateZfmReference(capKg) {
+    if (!activeRoute || !capKg) {
+      refZfm.classList.add('hidden');
+      return;
+    }
+    try {
+      const cfg = getTariffConfig(db);
+      const ccfg = getClientTariffConfig(db);
+      const cons = (ccfg.consolidacion || {})[activeRoute.id] || { factorConsolidacion: 1 };
+      const factor = cons.factorConsolidacion ?? 1;
+      const nextCap = NEXT_CAP_REF[capKg] || capKg;
+
+      const m = calcularCostoRuta(db, cfg, activeRoute, capKg);
+      const m5 = calcularCostoRuta(db, cfg, activeRoute, 5000);
+      const mNext = calcularCostoRuta(db, cfg, activeRoute, nextCap);
+
+      const zfmx = Math.round(m.zcapConMargen);
+      const zfmi = Math.round(m5.zcapConMargen * factor);
+      const zfmp = nextCap > 0 ? Math.round((mNext.zcapConMargen / nextCap) * factor) : 0;
+
+      refZfmi.textContent = formatCLP(zfmi);
+      refZfmp.textContent = formatCLP(zfmp);
+      refZfmx.textContent = formatCLP(zfmx);
+      refZfm.classList.remove('hidden');
+    } catch (err) {
+      console.error('Error al calcular referencia ZFMI/ZFMP/ZFMX:', err);
+      refZfm.classList.add('hidden');
+    }
+  }
+}
+
+// Renderizar la tabla de historial
+function renderHistoryTable(historyList) {
+  const tbody = document.getElementById('quotes-history-tbody');
+  if (!tbody) return;
+
+  if (!historyList || historyList.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" class="p-md text-center text-secondary">
+          No hay cotizaciones registradas recientemente.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  historyList.forEach(q => {
+    const tr = document.createElement('tr');
+    tr.className = "border-b border-outline-variant";
+    const badgeBg = (q.estado === 'ASIGNADO' || q.estado === 'RUTA CREADA') ? 'bg-green-100 text-green-800'
+      : q.estado === 'RUTA NO CREADA' ? 'bg-red-100 text-red-800'
+      : 'bg-secondary-container text-on-secondary-container';
+    tr.innerHTML = `
+      <td class="p-md font-data-mono text-data-mono">${q.fecha}</td>
+      <td class="p-md">${q.origen} → ${q.destino}</td>
+      <td class="p-md">${q.vehiculo}</td>
+      <td class="p-md">
+        <span class="inline-flex items-center px-2 py-1 rounded ${badgeBg} font-label-caps text-[10px]">
+          ${q.estado}
+        </span>
+      </td>
+      <td class="p-md text-right font-bold">${formatCLP(q.monto)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}

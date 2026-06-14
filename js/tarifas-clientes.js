@@ -655,4 +655,10 @@ function renderResultadosClientes(content, db, cfg, ccfg) {
     const rows = [];
     matriz.forEach(m => {
       expandExclusividad(m, m.zfmp).forEach(e => {
-        rows.push([m.centro ? m.centro.id : '', rutaIdExport(m), m.ruta.destino, capKgExport(m), 'KG', e.valor, e.exclusivo, validoDe, VALIDEZ_A])
+        rows.push([m.centro ? m.centro.id : '', rutaIdExport(m), m.ruta.destino, capKgExport(m), 'KG', e.valor, e.exclusivo, validoDe, VALIDEZ_A]);
+      });
+    });
+    downloadFile(`zfmp_clientes_${Date.now()}.csv`, toCSV(headers, rows));
+    showAlert('Archivo CSV de ZFMP exportado para ERP');
+  });
+}
