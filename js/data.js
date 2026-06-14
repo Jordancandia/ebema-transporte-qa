@@ -213,4 +213,510 @@ async function syncTable(table, pk, rows) {
 // Importante: cada tabla se sincroniza de forma independiente (try/catch propio).
 // Con RLS, un rol no-OWNER no tiene permiso para tocar ciertas tablas (p. ej.
 // truck_types, tariff_config); si esa tabla fallara y abortara el for...of,
-// el resto de las tablas (incluida la que el usuario realmente editó) 
+// el resto de las tablas (incluida la que el usuario realmente editó) nunca
+// se sincronizaría, aunque el error no tenga relación con su cambio.
+async function syncToSupabase(db) {
+  const fallidas = [];
+  for (const t of TABLE_MAP) {
+    try {
+      await syncTable(t.table, t.pk, db[t.local] || []);
+    } catch (err) {
+      const code = err && err.code ? ` (${err.code})` : '';
+      const motivo = err && err.code === '42501' ? 'sin permiso' : (err.message || String(err));
+      fallidas.push(`${t.table}${code}: ${motivo}`);
+      console.error(`Error al sincronizar la tabla "${t.table}":`, err.message || err);
+    }
+  }
+  if (fallidas.length > 0) {
+    throw new Error(`No se pudo sincronizar: ${fallidas.join(' | ')}`);
+  }
+}
+
+const defaultData = {
+  // 1. Usuarios corporativos registrados
+  users: [
+    { email: 'admin@ebema.cl', name: 'Administrador Ebema', role: 'admin' },
+    { email: 'logistica@ebema.cl', name: 'Operador Logístico', role: 'operador' }
+  ],
+
+  // 2. Transportistas (Administrador de Transportes)
+  transports: [
+    {
+      id: 't1',
+      razonSocial: 'Transportes TransMateriales Ltda',
+      rut: '76.849.201-3',
+      direccion: 'Av. Américo Vespucio 1230, Quilicura',
+      comuna: 'Quilicura',
+      region: 'Metropolitana',
+      telefono: '+56 9 8765 4321',
+      email: 'contacto@transmateriales.cl',
+      patente: 'HR-PX-45',
+      modelo: 'Mercedes-Benz Actros 2651',
+      anio: 2021,
+      capacidad: 28,
+      dimensiones: { largo: 13.6, ancho: 2.4, alto: 2.7 },
+      codigoSap: 'TRSP001',
+      activo: true,
+      documentos: {
+        permisoCirculacion:   { archivo: null, desde: '2025-01-01', hasta: '2026-12-31' },
+        seguroCarga:          { archivo: null, desde: '2025-03-01', hasta: '2026-02-28' },
+        padron:               { archivo: null, desde: '2020-06-01', hasta: '2030-06-01' },
+        soap:                 { archivo: null, desde: '2026-01-01', hasta: '2026-12-31' },
+        certificadoEmision:   { archivo: null, desde: '2025-06-01', hasta: '2026-06-01' }
+      },
+      conductor: {
+        nombre: 'Carlos Riquelme Fuentes',
+        rut: '15.432.876-K',
+        telefono: '+56 9 7654 3210',
+        licencia: 'A2-567890',
+        archivoLicencia: null,
+        archivoCarne: null
+      }
+    },
+    {
+      id: 't2',
+      razonSocial: 'Logística Rápida del Sur',
+      rut: '85.340.500-K',
+      direccion: 'Panamericana Sur Km 15, San Bernardo',
+      comuna: 'San Bernardo',
+      region: 'Metropolitana',
+      telefono: '+56 9 1234 5678',
+      email: 'operaciones@lograpidasur.cl',
+      patente: 'LK-TR-89',
+      modelo: 'Scania R 410',
+      anio: 2019,
+      capacidad: 15,
+      dimensiones: { largo: 8.5, ancho: 2.4, alto: 2.6 },
+      codigoSap: 'TRSP002',
+      activo: true,
+      documentos: {
+        permisoCirculacion:   { archivo: null, desde: '2025-01-01', hasta: '2025-12-31' },
+        seguroCarga:          { archivo: null, desde: '2025-03-01', hasta: '2025-12-31' },
+        padron:               { archivo: null, desde: '2019-04-01', hasta: '2029-04-01' },
+        soap:                 { archivo: null, desde: '2025-01-01', hasta: '2025-12-31' },
+        certificadoEmision:   { archivo: null, desde: '2025-01-01', hasta: '2025-06-30' }
+      },
+      conductor: {
+        nombre: 'Pedro Soto Contreras',
+        rut: '12.345.678-9',
+        telefono: '+56 9 9876 5432',
+        licencia: 'A2-112233',
+        archivoLicencia: null,
+        archivoCarne: null
+      }
+    },
+    {
+      id: 't3',
+      razonSocial: 'Fletes y Transportes del Centro',
+      rut: '93.200.410-6',
+      direccion: 'Camino a Melipilla 8900, Maipú',
+      comuna: 'Maipú',
+      region: 'Metropolitana',
+      telefono: '+56 9 4455 6677',
+      email: 'fletes.centro@gmail.com',
+      patente: 'GB-DS-12',
+      modelo: 'Volvo FH 420',
+      anio: 2018,
+      capacidad: 10,
+      dimensiones: { largo: 7.2, ancho: 2.3, alto: 2.5 },
+      codigoSap: 'TRSP003',
+      activo: false,
+      documentos: {
+        permisoCirculacion:   { archivo: null, desde: '', hasta: '' },
+        seguroCarga:          { archivo: null, desde: '', hasta: '' },
+        padron:               { archivo: null, desde: '', hasta: '' },
+        soap:                 { archivo: null, desde: '', hasta: '' },
+        certificadoEmision:   { archivo: null, desde: '', hasta: '' }
+      },
+      conductor: {
+        nombre: '',
+        rut: '',
+        telefono: '',
+        licencia: '',
+        archivoLicencia: null,
+        archivoCarne: null
+      }
+    }
+  ],
+
+  // 3. Rutas (Administrador de Rutas)
+  routes: [
+    {
+      id: 'r1',
+      codigo: 'RUT-SCL-QUI',
+      origenId: 'cd1',
+      destino: 'Quilicura',
+      region: 'Metropolitana',
+      tipo: 'Comuna',
+      km: 25,
+      activo: true
+    },
+    {
+      id: 'r2',
+      codigo: 'RUT-SCL-RAN',
+      origenId: 'cd1',
+      destino: 'Rancagua',
+      region: 'Libertador General Bernardo O\'Higgins',
+      tipo: 'Sector',
+      km: 95,
+      activo: true
+    },
+    {
+      id: 'r3',
+      codigo: 'RUT-SCL-CON',
+      origenId: 'cd1',
+      destino: 'Concepción',
+      region: 'Biobío',
+      tipo: 'Sector',
+      km: 510,
+      activo: true
+    },
+    {
+      id: 'r4',
+      codigo: 'RUT-CON-TAL',
+      origenId: 'cd2',
+      destino: 'Talcahuano',
+      region: 'Biobío',
+      tipo: 'Comuna',
+      km: 18,
+      activo: true
+    },
+    {
+      id: 'r5',
+      codigo: 'RUT-TEM-PAD',
+      origenId: 'cd3',
+      destino: 'Padre Las Casas',
+      region: 'La Araucanía',
+      tipo: 'Comuna',
+      km: 8,
+      activo: false
+    }
+  ],
+
+  // 4. Centros Logísticos (CD)
+  logisticsCentres: [
+    {
+      id: 'cd1',
+      nombre: 'CD Santiago Noviciado',
+      direccion: 'Camino Noviciado 1050, Lampa, Región Metropolitana',
+      lat: -33.3768,
+      lon: -70.8354
+    },
+    {
+      id: 'cd2',
+      nombre: 'CD Concepción',
+      direccion: 'Ruta 160 Km 12, Coronel, Región del Biobío',
+      lat: -36.9015,
+      lon: -73.1168
+    },
+    {
+      id: 'cd3',
+      nombre: 'CD Temuco',
+      direccion: 'Av. Recabarren 02500, Temuco, Región de La Araucanía',
+      lat: -38.7490,
+      lon: -72.6360
+    }
+  ],
+
+  // 5. Configuración de Tarifas (Matriz) — Tarifas de transporte por centro
+  // Define los costos base y costo por KM para cada categoría de Camión, por centro logístico (Id_centro)
+  truckTypes: buildTruckTypes([
+    { id: 'cd1' }, { id: 'cd2' }, { id: 'cd3' }
+  ]),
+
+  // 6. Historial de Cotizaciones (historial_cotizaciones)
+  quotesHistory: [
+    {
+      id: 'q1',
+      fecha: '2026-06-11 08:45',
+      routeId: 'r2',
+      origen: 'CD Santiago Noviciado',
+      destino: 'Rancagua',
+      vehiculo: 'Doble Puente',
+      estado: 'COTIZADO',
+      monto: 246000,
+      id_centro: '1080',
+      creado_por: null
+    },
+    {
+      id: 'q2',
+      fecha: '2026-06-11 08:12',
+      routeId: 'r4',
+      origen: 'CD Concepción',
+      destino: 'Talcahuano',
+      vehiculo: 'Sencillo',
+      estado: 'ASIGNADO',
+      monto: 66600,
+      id_centro: '1080',
+      creado_por: null
+    }
+  ],
+
+  // 7. Administrador de Tarifas Transporte (Pantalla 1)
+  tariffConfig: [
+    { id: 'global', data: defaultTariffConfig() }
+  ],
+
+  // 8. Administrador de Tarifas Clientes (Pantalla 2)
+  clientTariffConfig: [
+    { id: 'global', data: defaultClientTariffConfig() }
+  ]
+};
+
+// Obtener la base de datos en memoria (Supabase) o respaldo local
+export function getDatabase() {
+  if (memoryDb) return memoryDb;
+  const data = localStorage.getItem(STORAGE_KEY);
+  if (!data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
+    return defaultData;
+  }
+
+  const parsed = JSON.parse(data);
+
+  // Migración automática: Asegurar que todos los centros logísticos tengan lat y lon
+  let migrado = false;
+  if (parsed.logisticsCentres) {
+    parsed.logisticsCentres.forEach(cd => {
+      if (cd.lat === undefined || cd.lon === undefined) {
+        const dcd = defaultData.logisticsCentres.find(item => item.id === cd.id);
+        cd.lat = dcd ? dcd.lat : -33.4489;
+        cd.lon = dcd ? dcd.lon : -70.6693;
+        migrado = true;
+      }
+      // Eliminar el campo redundante idCentroSap (id ahora ES el código SAP)
+      if (cd.idCentroSap !== undefined) {
+        delete cd.idCentroSap;
+        migrado = true;
+      }
+    });
+  }
+
+  if (!parsed.hasOwnProperty('quotesHistory')) {
+    parsed.quotesHistory = defaultData.quotesHistory;
+    migrado = true;
+  }
+
+  // Migración: Asegurar que existe la tabla de usuarios (Roles y Perfiles)
+  if (!parsed.users) {
+    parsed.users = defaultData.users;
+    migrado = true;
+  }
+
+  // Migración: Asegurar que existe la colección de proveedores
+  if (!parsed.providers) {
+    parsed.providers = [];
+    migrado = true;
+  }
+
+  // Migración: Tarifas de transporte POR CENTRO (Id_centro, Kmbase, baseKM, id sintético)
+  if (!parsed.truckTypes || !parsed.truckTypes.some(t => t.Id_centro && t.id)) {
+    const centres = (parsed.logisticsCentres && parsed.logisticsCentres.length)
+      ? parsed.logisticsCentres
+      : defaultData.logisticsCentres;
+    const genericos = (parsed.truckTypes || []).filter(t => !t.Id_centro);
+    const baseTypes = genericos.length
+      ? genericos.map(t => ({ type: t.type, capacityTons: t.capacityTons, baseRate: t.baseRate, ratePerKm: t.ratePerKm }))
+      : TRUCK_BASE_TYPES;
+    parsed.truckTypes = buildTruckTypes(centres, baseTypes);
+    migrado = true;
+  }
+
+  // Migración: Característica de rutas (NORMAL / EXTREMA / ISLA)
+  if (parsed.routes) {
+    parsed.routes.forEach(r => {
+      if (!r.caracteristica) { r.caracteristica = 'NORMAL'; migrado = true; }
+    });
+  }
+
+  // Migración: Zona de transporte, clasificación y coordenadas del destino
+  if (parsed.routes) {
+    parsed.routes.forEach(r => {
+      if (r.idZonaTrans === undefined) { r.idZonaTrans = ''; migrado = true; }
+      if (r.clasificRuta === undefined) { r.clasificRuta = 'Regional'; migrado = true; }
+      if (r.lat === undefined) { r.lat = null; migrado = true; }
+      if (r.lon === undefined) { r.lon = null; migrado = true; }
+    });
+  }
+
+  // Migración: Transportistas multi-camión y multi-chofer
+  if (parsed.transports) {
+    parsed.transports.forEach(t => {
+      if (!t.camiones) {
+        t.camiones = t.patente ? [{
+          id: 'c' + t.id,
+          patente: t.patente,
+          modelo: t.modelo || '',
+          anio: t.anio || 2020,
+          capacidad: t.capacidad || 0,
+          ejes: calcEjes(t.capacidad || 0),
+          dimensiones: t.dimensiones || { largo: 0, ancho: 0, alto: 0 },
+          documentos: t.documentos || {},
+          choferRut: (t.conductor && t.conductor.rut) || ''
+        }] : [];
+        migrado = true;
+      }
+      if (!t.choferes) {
+        t.choferes = (t.conductor && t.conductor.nombre) ? [t.conductor] : [];
+        migrado = true;
+      }
+      if (!t.centrosServicio) { t.centrosServicio = []; migrado = true; }
+    });
+  }
+
+  // Migración: Tipo de eje por capacidad de camión (5-10 Ton -> 2 ejes · 15-28 Ton -> 3 ejes)
+  if (parsed.transports) {
+    parsed.transports.forEach(t => {
+      (t.camiones || []).forEach(c => {
+        if (c.ejes === undefined) { c.ejes = calcEjes(c.capacidad); migrado = true; }
+      });
+    });
+  }
+
+  // Migración: Datos bancarios para pago a transportistas (cuenta corriente / vista / etc.)
+  if (parsed.transports) {
+    parsed.transports.forEach(t => {
+      if (!t.datosBancarios) {
+        t.datosBancarios = { banco: '', tipoCuenta: '', numeroCuenta: '', rut: t.rut };
+        migrado = true;
+      } else if (t.datosBancarios.rut !== t.rut) {
+        t.datosBancarios.rut = t.rut;
+        migrado = true;
+      }
+    });
+  }
+
+  // Migración: Rutas enlazadas por nombre de CD → enlazar por ID (origenId)
+  if (parsed.routes && parsed.logisticsCentres) {
+    parsed.routes.forEach(r => {
+      if (!r.origenId) {
+        const cd = parsed.logisticsCentres.find(c =>
+          c.nombre && r.origen && c.nombre.trim().toLowerCase() === r.origen.trim().toLowerCase()
+        );
+        r.origenId = cd ? cd.id : (parsed.logisticsCentres[0] ? parsed.logisticsCentres[0].id : null);
+        delete r.origen;
+        migrado = true;
+      }
+    });
+  }
+
+  // Migración: Denominación de ruta (centro origen + destino)
+  if (parsed.routes && parsed.logisticsCentres) {
+    parsed.routes.forEach(r => {
+      if (!r.denominacion) {
+        const cd = parsed.logisticsCentres.find(c => c.id === r.origenId);
+        r.denominacion = `${cd ? cd.nombre : 'Origen'} - ${r.destino || ''}`;
+        migrado = true;
+      }
+    });
+  }
+
+  // Migración: Asegurar que todos los transportes tienen campos de ficha
+  if (parsed.transports) {
+    parsed.transports.forEach(t => {
+      if (!t.documentos) {
+        t.documentos = {
+          permisoCirculacion:   { archivo: null, desde: '', hasta: '' },
+          seguroCarga:          { archivo: null, desde: '', hasta: '' },
+          padron:               { archivo: null, desde: '', hasta: '' },
+          soap:                 { archivo: null, desde: '', hasta: '' },
+          certificadoEmision:   { archivo: null, desde: '', hasta: '' }
+        };
+        migrado = true;
+      }
+      if (!t.conductor) {
+        t.conductor = { nombre: '', rut: '', telefono: '', licencia: '', archivoLicencia: null, archivoCarne: null };
+        migrado = true;
+      }
+      if (!t.dimensiones) {
+        t.dimensiones = { largo: 0, ancho: 0, alto: 0 };
+        migrado = true;
+      }
+      if (!t.modelo) { t.modelo = ''; migrado = true; }
+      if (!t.anio) { t.anio = 2020; migrado = true; }
+      if (!t.comuna) { t.comuna = ''; migrado = true; }
+      if (!t.region) { t.region = ''; migrado = true; }
+    });
+  }
+
+  // Migración: Administrador de Tarifas Transporte (Pantalla 1)
+  if (!parsed.tariffConfig || !parsed.tariffConfig.length) {
+    parsed.tariffConfig = [{ id: 'global', data: defaultTariffConfig() }];
+    migrado = true;
+  } else {
+    // Fusión superficial con valores por defecto para llenar claves nuevas
+    const def = defaultTariffConfig();
+    const cfg = parsed.tariffConfig[0].data || {};
+    Object.keys(def).forEach(k => {
+      if (cfg[k] === undefined) { cfg[k] = def[k]; migrado = true; }
+    });
+    if (!cfg.variables) cfg.variables = def.variables;
+    Object.keys(def.variables).forEach(k => {
+      if (cfg.variables[k] === undefined) { cfg.variables[k] = def.variables[k]; migrado = true; }
+    });
+    parsed.tariffConfig[0].data = cfg;
+  }
+
+  // Migración: Administrador de Tarifas Clientes (Pantalla 2)
+  if (!parsed.clientTariffConfig || !parsed.clientTariffConfig.length) {
+    parsed.clientTariffConfig = [{ id: 'global', data: defaultClientTariffConfig() }];
+    migrado = true;
+  } else {
+    const def = defaultClientTariffConfig();
+    const cfg = parsed.clientTariffConfig[0].data || {};
+    Object.keys(def).forEach(k => {
+      if (cfg[k] === undefined) { cfg[k] = def[k]; migrado = true; }
+    });
+    parsed.clientTariffConfig[0].data = cfg;
+  }
+
+  if (migrado) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+  }
+
+  return parsed;
+}
+
+// Atajo: obtener/guardar la configuración de Tarifas Transporte (Pantalla 1)
+export function getTariffConfig(db) {
+  if (!db.tariffConfig || !db.tariffConfig.length) {
+    db.tariffConfig = [{ id: 'global', data: defaultTariffConfig() }];
+  }
+  return db.tariffConfig[0].data;
+}
+
+// Atajo: obtener/guardar la configuración de Tarifas Clientes (Pantalla 2)
+export function getClientTariffConfig(db) {
+  if (!db.clientTariffConfig || !db.clientTariffConfig.length) {
+    db.clientTariffConfig = [{ id: 'global', data: defaultClientTariffConfig() }];
+  }
+  return db.clientTariffConfig[0].data;
+}
+
+// Obtener el nombre de un Centro Logístico a partir de su ID
+export function getCentreName(db, centreId) {
+  const cd = db.logisticsCentres.find(c => c.id === centreId);
+  return cd ? cd.nombre : '(centro eliminado)';
+}
+
+// Guardar: memoria + respaldo local + sincronización con Supabase
+export function saveDatabase(data) {
+  deriveCamionesChoferes(data);
+  memoryDb = data;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Despachar un evento personalizado para actualizar las vistas en tiempo real
+  window.dispatchEvent(new Event('db_updated'));
+  // Sincronizar con el servidor en segundo plano
+  syncToSupabase(data).catch(err => {
+    console.error('Error al sincronizar con Supabase:', err.message || err);
+    window.dispatchEvent(new CustomEvent('db_sync_error', { detail: err.message || String(err) }));
+  });
+}
+
+// Resetear base de datos a los valores predeterminados
+export function resetDatabase() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
+  window.dispatchEvent(new Event('db_updated'));
+  return defaultData;
+}
+// fin de data.js

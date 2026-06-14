@@ -175,4 +175,8 @@ function campo(label, id, value, editable, colSpan = '1') {
   const val = value !== undefined && value !== null ? value : '';
   return `
     <div style="grid-column:span ${colSpan}">
-      <label for="${id}" style="display:block;font-size:10p
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:5px">${label}${locked ? ' <span style="color:#b5000b;font-size:9px">(bloqueado)</span>' : ''}</label>
+      <input type="text" id="${id}" value="${val}" ${locked ? 'readonly' : ''}
+        style="width:100%;padding:9px 12px;border:1.5px solid ${locked ? '#e9bcb6' : '#e1e3e4'};border-radius:7px;font-size:13px;color:${locked ? '#5c5f61' : '#191c1d'};background:${locked ? '#fdf5f4' : 'white'};outline:none;box-sizing:border-box;cursor:${locked ? 'not-allowed' : 'text'}" />
+    </div>`;
+}
