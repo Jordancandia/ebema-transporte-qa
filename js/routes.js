@@ -114,7 +114,7 @@ function renderRutasSubview(container) {
           <span class="material-symbols-outlined absolute left-sm top-1/2 -translate-y-1/2 text-secondary">search</span>
           <input type="text" id="route-search" class="w-full bg-surface-container-low border-none pl-10 pr-md py-xs font-body-md text-body-md focus:outline-none" placeholder="Buscar por Código, Origen, Destino, Región...">
         </div>
-        
+
         <div class="flex gap-sm w-full md:w-auto">
           <button id="btn-bulk-upload-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">upload_file</span>
@@ -289,7 +289,7 @@ function renderRutasSubview(container) {
             </code>
             Opcionalmente puede incluir: <code class="font-data-mono text-xs">caracteristica, denominacion, id_zonatrans, clasificacion, lat, lon</code>.
           </p>
-          
+
           <div class="border-2 border-dashed border-outline-variant hover:border-primary hover:bg-primary-container/[0.03] rounded-lg p-xl text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-sm" id="csv-route-dropzone">
             <span class="material-symbols-outlined text-[48px] text-secondary">cloud_upload</span>
             <span class="font-body-md text-secondary font-bold">Arrastra tu archivo CSV de rutas aquí o haz clic para buscar</span>
@@ -375,7 +375,7 @@ function renderRutasSubview(container) {
     editingRouteId = null;
     routeForm.reset();
     document.getElementById('route-modal-title').innerText = 'Nueva Ruta';
-    
+
     const activeDb = getDatabase();
     document.getElementById('r-codigo').value = generateSapCode('RUT-SAP-', activeDb.routes, 'codigo');
     actualizarDenominacion();
@@ -426,4 +426,319 @@ function renderRutasSubview(container) {
     }
   });
 
-  routeForm.a
+  routeForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const db = getDatabase();
+
+    const latVal = document.getElementById('r-lat').value;
+    const lonVal = document.getElementById('r-lon').value;
+
+    const routeData = {
+      codigo: document.getElementById('r-codigo').value.toUpperCase().replace(/\s+/g, ''),
+      origenId: document.getElementById('r-origen').value,
+      destino: document.getElementById('r-destino').value,
+      denominacion: document.getElementById('r-denominacion').value.trim(),
+      region: document.getElementById('r-region').value,
+      tipo: document.getElementById('r-tipo').value,
+      caracteristica: document.getElementById('r-caracteristica').value,
+      km: Number(document.getElementById('r-km').value),
+      idZonaTrans: document.getElementById('r-zona').value.trim(),
+      clasificRuta: document.getElementById('r-clasificacion').value,
+      lat: latVal !== '' ? Number(latVal) : null,
+      lon: lonVal !== '' ? Number(lonVal) : null,
+      activo: editingRouteId ? db.routes.find(r => r.id === editingRouteId).activo : true
+    };
+
+    if (editingRouteId) {
+      const index = db.routes.findIndex(r => r.id === editingRouteId);
+      if (index !== -1) {
+        db.routes[index] = { ...db.routes[index], ...routeData };
+        saveDatabase(db);
+        showAlert('Ruta actualizada correctamente');
+      }
+    } else {
+      if (db.routes.some(r => r.codigo === routeData.codigo)) {
+        showAlert('El Código de Ruta ingresado ya está registrado.', 'error');
+        return;
+      }
+
+      routeData.id = 'r' + (new Date().getTime());
+      db.routes.push(routeData);
+      saveDatabase(db);
+      showAlert('Ruta registrada con éxito');
+    }
+
+    closeFormModal();
+    renderRutasSubview(container);
+  });
+
+  // --- CARGA MASIVA DE RUTAS ---
+  const bulkModal = document.getElementById('bulk-upload-routes-modal');
+  const btnBulkUpload = document.getElementById('btn-bulk-upload-routes');
+  const btnCloseBulk = document.getElementById('btn-close-route-bulk-modal');
+  const btnCancelBulk = document.getElementById('btn-cancel-route-bulk');
+  const btnConfirmBulk = document.getElementById('btn-confirm-route-bulk');
+  const csvDropzone = document.getElementById('csv-route-dropzone');
+  const csvFileInput = document.getElementById('csv-route-input');
+
+  let parsedRoutes = [];
+
+  btnBulkUpload.addEventListener('click', () => {
+    parsedRoutes = [];
+    btnConfirmBulk.disabled = true;
+    document.getElementById('csv-route-preview-container').classList.add('hidden');
+    document.getElementById('csv-route-preview-body').innerHTML = '';
+
+    bulkModal.classList.remove('pointer-events-none', 'opacity-0');
+    bulkModal.querySelector('.modal-window').classList.remove('scale-95');
+  });
+
+  const closeBulkModal = () => {
+    bulkModal.classList.add('pointer-events-none', 'opacity-0');
+    bulkModal.querySelector('.modal-window').classList.add('scale-95');
+  };
+  btnCloseBulk.addEventListener('click', closeBulkModal);
+  btnCancelBulk.addEventListener('click', closeBulkModal);
+
+  csvDropzone.addEventListener('click', () => csvFileInput.click());
+
+  csvDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    csvDropzone.classList.add('border-primary', 'bg-primary-container/[0.04]');
+  });
+  csvDropzone.addEventListener('dragleave', () => {
+    csvDropzone.classList.remove('border-primary', 'bg-primary-container/[0.04]');
+  });
+  csvDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    csvDropzone.classList.remove('border-primary', 'bg-primary-container/[0.04]');
+    if (e.dataTransfer.files.length > 0) {
+      handleCsvRouteFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  csvFileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) {
+      handleCsvRouteFile(e.target.files[0]);
+    }
+  });
+
+  function handleCsvRouteFile(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const text = e.target.result;
+      const rows = parseCSV(text);
+      if (rows.length === 0) {
+        showAlert('El archivo CSV está vacío o no tiene el formato correcto.', 'error');
+        return;
+      }
+
+      const db = getDatabase();
+      parsedRoutes = [];
+      const previewBody = document.getElementById('csv-route-preview-body');
+      previewBody.innerHTML = '';
+
+      rows.forEach(row => {
+        const codigo = (row.codigo || '').toUpperCase().replace(/\s+/g, '');
+        const origen = row.origen || '';
+        const destino = row.destino || '';
+        const region = row.region || 'Metropolitana';
+        const tipo = row.tipo || 'Comuna';
+        const km = Number(row.km || 0);
+
+        // Resolver el nombre del CD a su ID (relación por ID)
+        const originCd = db.logisticsCentres.find(c =>
+          c.nombre.trim().toLowerCase() === origen.trim().toLowerCase()
+        );
+
+        let error = '';
+        if (!codigo) error = 'Falta Código';
+        else if (!origen) error = 'Falta Origen';
+        else if (!originCd) error = 'Origen no existe';
+        else if (!destino) error = 'Falta Destino';
+        else if (isNaN(km) || km <= 0) error = 'Distancia inválida';
+        else if (db.routes.some(r => r.codigo === codigo)) error = 'Código Duplicado';
+
+        const tr = document.createElement('tr');
+        tr.className = "border-b border-outline-variant";
+        tr.innerHTML = `
+          <td class="p-sm font-data-mono">${codigo}</td>
+          <td class="p-sm">${origen}</td>
+          <td class="p-sm">${destino}</td>
+          <td class="p-sm font-bold">${km} KM</td>
+          <td class="p-sm">
+            <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${error ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}">
+              ${error ? error : 'Listo'}
+            </span>
+          </td>
+        `;
+        previewBody.appendChild(tr);
+
+        if (!error) {
+          const caractCsv = (row.caracteristica || 'NORMAL').toUpperCase();
+          const clasifCsv = (row.clasific_ruta || row.clasificacion || '').trim();
+          parsedRoutes.push({
+            codigo,
+            origenId: originCd.id,
+            destino,
+            denominacion: row.denominacion ? row.denominacion.trim() : `${originCd.nombre} - ${destino}`,
+            region,
+            tipo,
+            caracteristica: ['NORMAL', 'EXTREMA', 'ISLA'].includes(caractCsv) ? caractCsv : 'NORMAL',
+            km,
+            idZonaTrans: row.id_zonatrans || row.idzonatrans || '',
+            clasificRuta: ['Regional', 'Interregional'].includes(clasifCsv) ? clasifCsv : 'Regional',
+            lat: row.lat ? Number(row.lat) : null,
+            lon: row.lon ? Number(row.lon) : null,
+            activo: true
+          });
+        }
+      });
+
+      document.getElementById('csv-route-count').innerText = rows.length;
+      document.getElementById('csv-route-preview-container').classList.remove('hidden');
+
+      if (parsedRoutes.length > 0) {
+        btnConfirmBulk.disabled = false;
+      } else {
+        showAlert('No se encontraron registros de rutas válidos.', 'error');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  btnConfirmBulk.addEventListener('click', () => {
+    const db = getDatabase();
+
+    parsedRoutes.forEach(r => {
+      r.id = 'r' + (new Date().getTime() + Math.random().toString(36).substr(2, 5));
+      db.routes.push(r);
+    });
+
+    saveDatabase(db);
+    showAlert(`Se importaron ${parsedRoutes.length} rutas correctamente.`);
+    closeBulkModal();
+    renderRutasSubview(container);
+  });
+}
+
+function renderRoutesTable(routesList) {
+  const tbody = document.getElementById('routes-table-body');
+  if (!tbody) return;
+
+  if (routesList.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="11" class="p-xl text-center text-secondary">
+          No se encontraron rutas registradas.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  const dbForNames = getDatabase();
+  routesList.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = "border-b border-outline-variant hover:bg-surface-container-low transition-colors";
+
+    const statusBg = r.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+
+    tr.innerHTML = `
+      <td class="p-md font-bold text-primary font-data-mono">${r.codigo}</td>
+      <td class="p-md text-xs">${r.denominacion || `${getCentreName(dbForNames, r.origenId)} - ${r.destino}`}</td>
+      <td class="p-md font-bold">${getCentreName(dbForNames, r.origenId)}</td>
+      <td class="p-md">${r.destino}</td>
+      <td class="p-md text-xs text-secondary">${r.region}</td>
+      <td class="p-md"><span class="bg-surface-container-high px-sm py-1 border border-outline-variant rounded text-xs">${r.tipo}</span></td>
+      <td class="p-md text-xs">${r.clasificRuta || '—'}</td>
+      <td class="p-md"><span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${CARACT_STYLES[r.caracteristica || 'NORMAL']}">${r.caracteristica || 'NORMAL'}</span></td>
+      <td class="p-md font-bold font-data-mono">${r.km} KM</td>
+      <td class="p-md">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${statusBg}">
+          ${r.activo ? 'ACTIVO' : 'DE BAJA'}
+        </span>
+      </td>
+      <td class="p-md text-center">
+        <div class="flex items-center justify-center gap-xs">
+          <button class="btn-edit text-secondary hover:text-primary p-xs cursor-pointer" data-id="${r.id}" title="Editar ruta">
+            <span class="material-symbols-outlined text-[20px]">edit</span>
+          </button>
+          <button class="btn-toggle text-secondary hover:text-primary p-xs cursor-pointer" data-id="${r.id}" title="${r.activo ? 'Dar de baja' : 'Activar'}">
+            <span class="material-symbols-outlined text-[20px] ${r.activo ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}">
+              ${r.activo ? 'block' : 'check_circle'}
+            </span>
+          </button>
+          <button class="btn-delete-route text-secondary hover:text-red-700 p-xs cursor-pointer" data-id="${r.id}" title="Eliminar ruta">
+            <span class="material-symbols-outlined text-[20px]">delete</span>
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.btn-edit').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const id = e.currentTarget.getAttribute('data-id');
+      const db = getDatabase();
+      const r = db.routes.find(item => item.id === id);
+
+      if (r) {
+        editingRouteId = id;
+        document.getElementById('r-codigo').value = r.codigo;
+        document.getElementById('r-origen').value = r.origenId;
+        document.getElementById('r-destino').value = r.destino;
+        document.getElementById('r-denominacion').value = r.denominacion || `${getCentreName(db, r.origenId)} - ${r.destino}`;
+        document.getElementById('r-region').value = r.region;
+        document.getElementById('r-tipo').value = r.tipo;
+        document.getElementById('r-caracteristica').value = r.caracteristica || 'NORMAL';
+        document.getElementById('r-km').value = r.km;
+        document.getElementById('r-zona').value = r.idZonaTrans || '';
+        document.getElementById('r-clasificacion').value = r.clasificRuta || 'Regional';
+        document.getElementById('r-lat').value = r.lat !== null && r.lat !== undefined ? r.lat : '';
+        document.getElementById('r-lon').value = r.lon !== null && r.lon !== undefined ? r.lon : '';
+
+        document.getElementById('route-modal-title').innerText = 'Editar Ruta';
+
+        const modal = document.getElementById('route-modal');
+        modal.classList.remove('pointer-events-none', 'opacity-0');
+        modal.querySelector('.modal-window').classList.remove('scale-95');
+      }
+    });
+  });
+
+  tbody.querySelectorAll('.btn-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const id = e.currentTarget.getAttribute('data-id');
+      const db = getDatabase();
+      const idx = db.routes.findIndex(item => item.id === id);
+
+      if (idx !== -1) {
+        const r = db.routes[idx];
+        r.activo = !r.activo;
+        saveDatabase(db);
+        showAlert(`La ruta ${r.codigo} ha sido ${r.activo ? 'activada' : 'dada de baja'}.`);
+        renderRoutesView(document.getElementById('stage-area'));
+      }
+    });
+  });
+
+  tbody.querySelectorAll('.btn-delete-route').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const id = e.currentTarget.getAttribute('data-id');
+      const db = getDatabase();
+      const idx = db.routes.findIndex(item => item.id === id);
+
+      if (idx !== -1) {
+        const r = db.routes[idx];
+        if (!confirm(`¿Eliminar la ruta ${r.codigo} (${r.denominacion || r.destino})? Esta acción no se puede deshacer.`)) return;
+        db.routes.splice(idx, 1);
+        saveDatabase(db);
+        showAlert(`La ruta ${r.codigo} ha sido eliminada.`);
+        renderRoutesView(document.getElementById('stage-area'));
+      }
+    });
+  });
+}
