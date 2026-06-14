@@ -564,4 +564,114 @@ function camionCard(c, i, choferes) {
                 </div>
                 <div>
                   <label style="display:block;font-size:9px;font-weight:700;text-transform:uppercase;color:#5c5f61;margin-bottom:3px">Desde</label>
-                  <input type="date" class="doc-desde-${d.key}" value="${(doc.desde || '').slice(0, 10)}" style="width:100%;padding:6px 8px;border:1.5px solid #e1e3e4;border-radius:6px;font-size:12px;box-sizing:border-b
+                  <input type="date" class="doc-desde-${d.key}" value="${(doc.desde || '').slice(0, 10)}" style="width:100%;padding:6px 8px;border:1.5px solid #e1e3e4;border-radius:6px;font-size:12px;box-sizing:border-box" />
+                </div>
+                <div>
+                  <label style="display:block;font-size:9px;font-weight:700;text-transform:uppercase;color:#5c5f61;margin-bottom:3px">Hasta</label>
+                  <input type="date" class="doc-hasta-${d.key}" value="${(doc.hasta || '').slice(0, 10)}" style="width:100%;padding:6px 8px;border:1.5px solid #e1e3e4;border-radius:6px;font-size:12px;box-sizing:border-box" />
+                </div>
+                ${d.conValor ? `
+                <div>
+                  <label style="display:block;font-size:9px;font-weight:700;text-transform:uppercase;color:#b5000b;margin-bottom:3px">Valor (CLP)</label>
+                  <input type="number" min="0" class="doc-valor-${d.key}" value="${doc.valor || ''}" placeholder="$"
+                    style="width:100%;padding:6px 8px;border:1.5px solid ${Number(doc.valor) > 0 ? '#e1e3e4' : '#fcd34d'};border-radius:6px;font-size:12px;box-sizing:border-box;background:${Number(doc.valor) > 0 ? 'white' : '#fffbeb'}" />
+                </div>` : ''}
+                <div>
+                  <input type="file" id="file-${c.id}-${d.key}" class="doc-file-input" data-camion="${c.id}" data-doc="${d.key}" accept=".pdf,.jpg,.jpeg,.png" style="display:none" />
+                  <button type="button" class="btn-upload-doc" data-input="file-${c.id}-${d.key}"
+                    style="display:inline-flex;align-items:center;gap:5px;padding:7px 10px;background:white;border:1.5px dashed #c5c7c9;border-radius:6px;font-size:11px;font-weight:600;color:#5c5f61;cursor:pointer;width:100%;justify-content:center">
+                    <span class="material-symbols-outlined" style="font-size:14px">upload_file</span>
+                    <span id="lbl-${c.id}-${d.key}">${doc.archivo ? '✓ ' + escapeHtml(doc.archivo) : 'Subir archivo'}</span>
+                  </button>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;padding-top:6px;border-top:1px solid #f3f4f5">
+          <button type="button" class="btn-save-camion" data-camion="${c.id}" style="display:inline-flex;align-items:center;gap:6px;padding:9px 18px;background:#2e7d32;color:white;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">
+            <span class="material-symbols-outlined" style="font-size:16px">save</span> Guardar Camión
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function camField(label, cls, value, type = 'text') {
+  return `
+    <div>
+      <label style="display:block;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#5c5f61;margin-bottom:4px">${label}</label>
+      <input type="${type}" class="${cls}" value="${escapeHtml(value !== undefined && value !== null ? value : '')}" ${type === 'number' ? 'step="0.1"' : ''}
+        style="width:100%;padding:8px 10px;border:1.5px solid #e1e3e4;border-radius:7px;font-size:13px;color:#191c1d;background:white;outline:none;box-sizing:border-box"
+        onfocus="this.style.borderColor='#2e7d32'" onblur="this.style.borderColor='#e1e3e4'" />
+    </div>`;
+}
+
+function fieldGroup(label, id, value, type = 'text', editable = true, colSpan = '1') {
+  const locked = !editable;
+  const val = value !== undefined && value !== null ? value : '';
+  return `
+    <div style="grid-column:span ${colSpan}">
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:5px">${label}${editable ? '' : ' <span style="color:#b5000b;font-size:9px">(bloqueado)</span>'}</label>
+      <input type="${type}" id="${id}" value="${escapeHtml(val)}" ${locked ? 'readonly' : ''}
+        style="width:100%;padding:9px 12px;border:1.5px solid ${locked ? '#e9bcb6' : '#e1e3e4'};border-radius:7px;font-size:13px;color:${locked ? '#5c5f61' : '#191c1d'};background:${locked ? '#fdf5f4' : 'white'};outline:none;box-sizing:border-box;cursor:${locked ? 'not-allowed' : 'text'}"
+        ${locked ? '' : `onfocus="this.style.borderColor='#b5000b'" onblur="this.style.borderColor='#e1e3e4'"`} />
+    </div>`;
+}
+
+function selectRegion(label, id, current) {
+  const options = REGIONES_CHILE.map(r =>
+    `<option value="${r}" ${r === current ? 'selected' : ''}>${r}</option>`
+  ).join('');
+  return `
+    <div>
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:5px">${label}</label>
+      <select id="${id}" style="width:100%;padding:9px 12px;border:1.5px solid #e1e3e4;border-radius:7px;font-size:13px;color:#191c1d;background:white;outline:none;box-sizing:border-box">
+        <option value="">Seleccionar región...</option>
+        ${options}
+      </select>
+    </div>`;
+}
+
+function selectBanco(label, id, current) {
+  const options = BANCOS_CHILE.map(b =>
+    `<option value="${b}" ${b === current ? 'selected' : ''}>${b}</option>`
+  ).join('');
+  return `
+    <div>
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:5px">${label}</label>
+      <select id="${id}" style="width:100%;padding:9px 12px;border:1.5px solid #e1e3e4;border-radius:7px;font-size:13px;color:#191c1d;background:white;outline:none;box-sizing:border-box">
+        <option value="">Seleccionar banco...</option>
+        ${options}
+      </select>
+    </div>`;
+}
+
+function selectTipoCuenta(label, id, current) {
+  const options = TIPOS_CUENTA.map(tc =>
+    `<option value="${tc}" ${tc === current ? 'selected' : ''}>${tc}</option>`
+  ).join('');
+  return `
+    <div>
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:5px">${label}</label>
+      <select id="${id}" style="width:100%;padding:9px 12px;border:1.5px solid #e1e3e4;border-radius:7px;font-size:13px;color:#191c1d;background:white;outline:none;box-sizing:border-box">
+        <option value="">Seleccionar tipo de cuenta...</option>
+        ${options}
+      </select>
+    </div>`;
+}
+
+function selectCentro(label, id, cds, current) {
+  const options = cds.map(cd =>
+    `<option value="${cd.id}" ${cd.id === current ? 'selected' : ''}>${cd.nombre} (${cd.id})</option>`
+  ).join('');
+  return `
+    <div>
+      <label for="${id}" style="display:block;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#5c5f61;margin-bottom:4px">${label}</label>
+      <select id="${id}" style="width:100%;padding:9px 12px;border:1.5px solid #e1e3e4;border-radius:7px;font-size:13px;color:#191c1d;background:white;outline:none;box-sizing:border-box">
+        <option value="">Sin asignar...</option>
+        ${options}
+      </select>
+    </div>`;
+}

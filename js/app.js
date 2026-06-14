@@ -755,3 +755,291 @@ function renderRecoverView() {
                 <p style="color:rgba(255,255,255,0.55);font-size:12px">Le enviaremos un enlace seguro</p>
               </div>
             </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div style="min-width:28px;height:28px;background:rgba(255,255,255,0.12);border-radius:50%;display:flex;align-items:center;justify-content:center">
+                <span class="material-symbols-outlined" style="color:white;font-size:14px">lock_open</span>
+              </div>
+              <div>
+                <p style="color:white;font-size:13px;font-weight:600;margin-bottom:2px">Restablezca su clave</p>
+                <p style="color:rgba(255,255,255,0.55);font-size:12px">Cree una nueva contraseña segura</p>
+              </div>
+            </div>
+          </div>
+          <p style="color:rgba(255,255,255,0.35);font-size:11px;margin-top:24px">© 2026 EBEMA Chile — Acceso restringido</p>
+        </div>
+      </div>
+
+      <!-- Panel Derecho: Formulario de Recuperación -->
+      <div class="flex-1 flex items-center justify-center p-8">
+        <div style="width:100%;max-width:420px;animation:slideUp 0.4s ease-out">
+
+          <!-- Estado: Formulario -->
+          <div id="recover-step-form">
+            <div style="margin-bottom:32px">
+              <button id="link-back-login" style="display:inline-flex;align-items:center;gap:6px;color:#5c5f61;background:none;border:none;cursor:pointer;font-size:13px;margin-bottom:20px;padding:0" onmouseover="this.style.color='#b5000b'" onmouseout="this.style.color='#5c5f61'">
+                <span class="material-symbols-outlined" style="font-size:16px">arrow_back</span>
+                Volver al Login
+              </button>
+
+              <div style="width:52px;height:52px;background:#ffdad5;border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px">
+                <span class="material-symbols-outlined" style="color:#b5000b;font-size:28px">lock_reset</span>
+              </div>
+
+              <h1 style="font-size:26px;font-weight:800;color:#191c1d;letter-spacing:-0.02em;line-height:1.2;margin-bottom:6px">Recuperar Contraseña</h1>
+              <p style="color:#5c5f61;font-size:14px">Ingrese su correo corporativo para recibir el enlace de restablecimiento.</p>
+            </div>
+
+            <form id="recover-form" style="display:flex;flex-direction:column;gap:18px">
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#5c5f61;margin-bottom:6px">Correo Corporativo</label>
+                <div style="position:relative">
+                  <span class="material-symbols-outlined" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#5c5f61;font-size:18px;pointer-events:none">mail</span>
+                  <input type="email" id="recover-email" placeholder="usuario@ebema.cl" required
+                    style="width:100%;padding:12px 12px 12px 40px;border:1.5px solid #e1e3e4;border-radius:8px;font-size:14px;background:white;color:#191c1d;outline:none;transition:border-color 0.2s;box-sizing:border-box"
+                    onfocus="this.style.borderColor='#b5000b'" onblur="this.style.borderColor='#e1e3e4'" />
+                </div>
+              </div>
+
+              <button type="submit" id="btn-recover-submit"
+                style="width:100%;padding:13px;background:#b5000b;color:white;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:background 0.2s;display:flex;align-items:center;justify-content:center;gap:8px"
+                onmouseover="this.style.background='#930007'" onmouseout="this.style.background='#b5000b'"
+              >
+                <span class="material-symbols-outlined" style="font-size:18px">send</span>
+                Enviar Instrucciones
+              </button>
+            </form>
+          </div>
+
+          <!-- Estado: Éxito (oculto inicialmente) -->
+          <div id="recover-step-success" style="display:none;text-align:center;animation:slideUp 0.4s ease-out">
+            <div style="width:72px;height:72px;background:#dcfce7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
+              <span class="material-symbols-outlined" style="color:#16a34a;font-size:36px">mark_email_read</span>
+            </div>
+            <h2 style="font-size:22px;font-weight:800;color:#191c1d;margin-bottom:10px">¡Correo enviado!</h2>
+            <p style="color:#5c5f61;font-size:14px;line-height:1.6;margin-bottom:28px">Hemos enviado las instrucciones de recuperación a <strong id="recover-email-display"></strong>. Revise su bandeja de entrada.</p>
+            <div style="padding:14px;background:#f3f4f5;border-radius:8px;margin-bottom:24px;text-align:left">
+              <p style="font-size:12px;color:#5c5f61;display:flex;align-items:flex-start;gap:8px">
+                <span class="material-symbols-outlined" style="font-size:16px;color:#b5000b;flex-shrink:0;margin-top:1px">info</span>
+                Si no recibe el correo en 5 minutos, revise la carpeta de spam o contacte al administrador del sistema.
+              </p>
+            </div>
+            <button id="btn-go-login" style="width:100%;padding:12px;background:#b5000b;color:white;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px" onmouseover="this.style.background='#930007'" onmouseout="this.style.background='#b5000b'">
+              <span class="material-symbols-outlined" style="font-size:16px">login</span>
+              Volver al Inicio de Sesión
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <style>
+      @keyframes slideUp {
+        from { opacity: 0; transform: translateY(24px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  `;
+
+  document.getElementById('link-back-login').addEventListener('click', () => {
+    authState = 'login'; renderAuthView();
+  });
+
+  document.getElementById('btn-go-login')?.addEventListener('click', () => {
+    authState = 'login'; renderAuthView();
+  });
+
+  document.getElementById('recover-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('recover-email').value.trim().toLowerCase();
+    const btn = document.getElementById('btn-recover-submit');
+
+    if (!email.endsWith('@ebema.cl')) {
+      showAlert('El correo debe ser de dominio corporativo @ebema.cl', 'error');
+      return;
+    }
+
+    btn.innerHTML = '<div style="width:16px;height:16px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:spin 0.7s linear infinite"></div> Enviando...';
+    btn.disabled = true;
+
+    // Envío real del correo de recuperación vía Supabase Auth
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+
+    if (error) {
+      showAlert('No se pudo enviar el correo: ' + error.message, 'error');
+      btn.innerHTML = 'Enviar instrucciones';
+      btn.disabled = false;
+      return;
+    }
+
+    document.getElementById('recover-step-form').style.display = 'none';
+    const successEl = document.getElementById('recover-step-success');
+    successEl.style.display = 'block';
+    document.getElementById('recover-email-display').textContent = email;
+
+    document.getElementById('btn-go-login').addEventListener('click', () => {
+      authState = 'login'; renderAuthView();
+    });
+  });
+}
+
+// ==========================================================================
+// SHELL DEL DASHBOARD DE SIT EBEMA
+// ==========================================================================
+function renderDashboardShell() {
+  appRoot.innerHTML = `
+    <!-- SideNavBar Anchor -->
+    <nav class="flex flex-col h-full py-lg px-md h-full w-64 fixed left-0 top-0 border-r border-surface-variant bg-surface z-50">
+      <div class="mb-xl px-sm flex flex-col gap-xs">
+        <h1 class="text-headline-sm font-headline-sm font-bold text-primary">SIT EBEMA</h1>
+        <p class="text-label-caps font-label-caps text-secondary uppercase tracking-wider">Logistics Admin</p>
+      </div>
+      
+      <div class="space-y-base flex-1" id="sidebar-nav-container">
+        <!-- Cotizador (Costs) -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="rates" id="nav-rates">
+          <span class="material-symbols-outlined">payments</span>
+          <span class="font-body-md text-body-md">Cotizador</span>
+        </a>
+
+        <!-- Transportistas (Transports) -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="transports" id="nav-transports">
+          <span class="material-symbols-outlined">local_shipping</span>
+          <span class="font-body-md text-body-md">Transportes</span>
+        </a>
+
+        <!-- Rutas de Transporte (Routes + Centros SAP) -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="routes" id="nav-routes">
+          <span class="material-symbols-outlined">route</span>
+          <span class="font-body-md text-body-md">Rutas de Transporte</span>
+        </a>
+
+        <!-- Roles y Perfiles -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="roles" id="nav-roles">
+          <span class="material-symbols-outlined">admin_panel_settings</span>
+          <span class="font-body-md text-body-md">Roles y Perfiles</span>
+        </a>
+
+        <!-- Administrador de Tarifas Transporte -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="tarifas-transporte" id="nav-tarifas-transporte">
+          <span class="material-symbols-outlined">calculate</span>
+          <span class="font-body-md text-body-md">Tarifas Transporte</span>
+        </a>
+
+        <!-- Administrador de Tarifas Clientes -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="tarifas-clientes" id="nav-tarifas-clientes">
+          <span class="material-symbols-outlined">request_quote</span>
+          <span class="font-body-md text-body-md">Tarifas Clientes</span>
+        </a>
+      </div>
+
+      <div class="mt-auto space-y-base border-t border-surface-variant pt-lg">
+        <a class="flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" id="btn-logout">
+          <span class="material-symbols-outlined">logout</span>
+          <span class="font-body-md text-body-md">Logout</span>
+        </a>
+      </div>
+    </nav>
+
+    <!-- TopAppBar Anchor -->
+    <header class="flex justify-between items-center h-16 w-full pl-72 pr-margin-desktop bg-surface/80 backdrop-blur-md sticky top-0 z-40 border-b border-surface-variant">
+      <div class="flex items-center gap-md">
+        <span class="text-headline-sm font-headline-sm font-black text-primary hidden md:block">SIT EBEMA</span>
+        <div class="h-8 w-px bg-surface-variant mx-md"></div>
+        <h2 class="text-headline-sm font-headline-sm text-on-surface" id="current-page-title">Cotizador de Tarifas</h2>
+      </div>
+      
+      <div class="flex items-center gap-lg">
+        <div class="relative hidden lg:block">
+          <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-secondary">search</span>
+          <input class="pl-10 pr-md py-2 bg-surface-container rounded-lg border-none text-body-md w-64 focus:ring-2 focus:ring-primary/20" placeholder="Buscar..." type="text"/>
+        </div>
+        
+        <div class="flex items-center gap-sm">
+          <button class="p-2 text-secondary hover:text-primary transition-colors hover:bg-surface-container rounded-full cursor-pointer">
+            <span class="material-symbols-outlined">notifications</span>
+          </button>
+          <button class="p-2 text-secondary hover:text-primary transition-colors hover:bg-surface-container rounded-full cursor-pointer">
+            <span class="material-symbols-outlined">help_outline</span>
+          </button>
+          
+          <div class="ml-md flex items-center gap-sm border-l border-outline-variant pl-md">
+            <img alt="Administrator Profile" class="w-8 h-8 rounded-full border border-surface-variant object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAAiTCyOhKKpto4TzfW6NIN1sv2OnD_9ISi9_9_tuiAbSovN5cnzTELz4Nql3oFKqQtKhma605ToY_Wn_NCRFbTTLlPwqO5mUsoaSuanYh8zDr7tuqBfaVDdqELWJ7hsYGQl0_xbHsbnSyfAJtiMUt8QMjibQpBCKP4HVz8EUYAGiIrmOly9grHxAaCVCvEcLusH9iewFzjlCHudJnFoLRiF6UTfElTfE36J3YYH5nQBtZlQWKZWewp0HE3B2ymMPHWw9X9ic394nY"/>
+            <div class="hidden sm:block text-left">
+              <p class="text-label-caps font-label-caps leading-none font-bold" id="topbar-user-name">${currentSession.name}</p>
+              <p class="text-[10px] text-secondary">${currentSession.role}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Canvas -->
+    <main class="ml-64 p-margin-desktop min-h-[calc(100vh-64px)] bg-background">
+      <div id="stage-area">
+        <!-- Inyectado dinámicamente -->
+      </div>
+    </main>
+  `;
+
+  // Cerrar Sesión (también en el servidor)
+  document.getElementById('btn-logout').addEventListener('click', handleLogout);
+
+  // Enrutamiento de pestañas del Sidebar
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      const tabName = e.currentTarget.getAttribute('data-tab');
+      switchTab(tabName);
+    });
+  });
+
+  // Cargar pestaña inicial
+  switchTab(currentTab);
+}
+
+function switchTab(tabName) {
+  currentTab = tabName;
+
+  // Restaurar clases inactivas
+  document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.className = "sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer active:scale-95";
+  });
+
+  const activeNav = document.getElementById(`nav-${tabName}`);
+  if (activeNav) {
+    // Aplicar la clase activa de Google Stitch
+    activeNav.className = "sidebar-item flex items-center gap-md px-md py-sm bg-primary-container text-on-primary-container rounded-lg font-semibold opacity-90 transition-all duration-150 cursor-pointer";
+  }
+
+  const pageTitle = document.getElementById('current-page-title');
+  const stage = document.getElementById('stage-area');
+
+  switch (tabName) {
+    case 'rates':
+      pageTitle.textContent = 'Cotizador de Tarifas';
+      renderRatesView(stage);
+      break;
+    case 'transports':
+      pageTitle.textContent = 'Gestión de Transportes';
+      renderTransportsView(stage);
+      break;
+    case 'routes':
+      pageTitle.textContent = 'Rutas de Transporte';
+      renderRoutesView(stage);
+      break;
+    case 'roles':
+      pageTitle.textContent = 'Roles y Perfiles';
+      renderRolesView(stage);
+      break;
+    case 'tarifas-transporte':
+      pageTitle.textContent = 'Administrador de Tarifas Transporte';
+      renderTariffTransportView(stage);
+      break;
+    case 'tarifas-clientes':
+      pageTitle.textContent = 'Administrador de Tarifas Clientes';
+      renderClientTariffView(stage);
+      break;
+  }
+}

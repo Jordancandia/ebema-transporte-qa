@@ -438,4 +438,152 @@ function saveUser() {
     db.users.push({ email, name, role: selectedRole, centroId: finalCentroId, transportistaId: finalTransportistaId, activo: true, lastAccess: 'Nunca' });
     showAlert(`Usuario ${name} registrado con éxito.`);
   } else {
-    // Edita
+    // Editar usuario
+    const idx = parseInt(editIdx);
+    if (db.users[idx]) {
+      db.users[idx].name = name;
+      db.users[idx].role = selectedRole;
+      db.users[idx].centroId = finalCentroId;
+      db.users[idx].transportistaId = finalTransportistaId;
+      showAlert(`Perfil de ${name} actualizado.`);
+    }
+  }
+
+  saveDatabase(db);
+  closeModal();
+
+  // Re-renderizar la vista completa
+  const container = document.getElementById('stage-area');
+  if (container) renderRolesView(container);
+}
+
+function renderUsersTable(usersList, viewContainer, isFiltered = false) {
+  const tbody = document.getElementById('users-roles-tbody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+
+  if (usersList.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="padding:48px 20px;text-align:center;color:#5c5f61">
+          <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;opacity:0.3">search_off</span>
+          <p style="font-size:14px">No se encontraron usuarios</p>
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  // Necesitamos el índice real en db.users para acciones
+  const db = getDatabase();
+
+  usersList.forEach((user, localIdx) => {
+    // Índice real en la DB (para editar/toggle por índice)
+    const realIdx = isFiltered
+      ? db.users.findIndex(u => u.email === user.email)
+      : localIdx;
+
+    const normRole = normalizeRole(user.role);
+    const rc = getRoleConfig(user.role);
+    const [avatarBg, avatarText] = getAvatarPalette(user.email);
+    const initials = getInitials(user.name);
+    const isActive = user.activo !== false;
+
+    // Normalizar nombre de rol para display (uno de los 5 perfiles canónicos)
+    const roleDisplay = rc.label;
+
+    // Centro o transportista asociado (según el perfil)
+    let asociadoTxt = '';
+    if (CENTRO_ROLES.includes(normRole) && user.centroId) {
+      asociadoTxt = getCentreName(db, user.centroId) || '';
+    } else if (TRANSPORTE_ROLES.includes(normRole) && user.transportistaId) {
+      const t = (db.transports || []).find(t => t.id === user.transportistaId);
+      asociadoTxt = t ? (t.razonSocial || t.nombre || '') : '';
+    }
+
+    const tr = document.createElement('tr');
+    tr.className = 'user-row';
+    tr.style.cssText = 'border-bottom:1px solid #f3f4f5;transition:background 0.15s';
+
+    tr.innerHTML = `
+      <td style="padding:14px 20px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:36px;height:36px;border-radius:50%;background:${avatarBg};color:${avatarText};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;border:1px solid ${avatarBg}">
+            ${initials}
+          </div>
+          <div>
+            <p style="font-size:14px;font-weight:700;color:#191c1d;line-height:1.2">${user.name || '—'}</p>
+            <p style="font-size:11px;color:#5c5f61;margin-top:2px">Último acceso: ${user.lastAccess || 'Nunca'}</p>
+          </div>
+        </div>
+      </td>
+      <td style="padding:14px 16px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#5c5f61">${user.email}</span>
+      </td>
+      <td style="padding:14px 16px">
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:${rc.bg};color:${rc.text};border:1px solid ${rc.border};border-radius:20px;font-size:11px;font-weight:700">
+          <span class="material-symbols-outlined" style="font-size:12px">${rc.icon}</span>
+          ${roleDisplay}
+        </span>
+        ${asociadoTxt ? `<p style="font-size:10px;color:#5c5f61;margin-top:4px">${asociadoTxt}</p>` : ''}
+      </td>
+      <td style="padding:14px 16px;text-align:center">
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;${isActive ? 'background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7' : 'background:#fce4e4;color:#b71c1c;border:1px solid #ef9a9a'}">
+          <span style="width:5px;height:5px;border-radius:50%;background:${isActive ? '#43a047' : '#e53935'};display:inline-block"></span>
+          ${isActive ? 'ACTIVO' : 'INACTIVO'}
+        </span>
+      </td>
+      <td style="padding:14px 16px;text-align:center">
+        <div style="display:inline-flex;align-items:center;gap:4px">
+          <button class="btn-edit-user" data-idx="${realIdx}"
+            title="Editar perfil"
+            style="padding:6px;background:#f3f4f5;border:1px solid #e1e3e4;border-radius:6px;cursor:pointer;display:flex;align-items:center;transition:all 0.15s"
+            onmouseover="this.style.background='#e7e8e9';this.style.borderColor='#b5000b'" onmouseout="this.style.background='#f3f4f5';this.style.borderColor='#e1e3e4'">
+            <span class="material-symbols-outlined" style="font-size:16px;color:#5c5f61">edit</span>
+          </button>
+          <button class="btn-toggle-user" data-idx="${realIdx}"
+            title="${isActive ? 'Desactivar usuario' : 'Activar usuario'}"
+            style="padding:6px;background:${isActive ? '#fff8f7' : '#f0fdf4'};border:1px solid ${isActive ? '#ffb4aa' : '#a5d6a7'};border-radius:6px;cursor:pointer;display:flex;align-items:center;transition:all 0.15s"
+            onmouseover="this.style.opacity='0.75'" onmouseout="this.style.opacity='1'">
+            <span class="material-symbols-outlined" style="font-size:16px;color:${isActive ? '#b5000b' : '#2e7d32'}">${isActive ? 'person_off' : 'how_to_reg'}</span>
+          </button>
+        </div>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // Eventos: Editar usuario
+  tbody.querySelectorAll('.btn-edit-user').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.getAttribute('data-idx'));
+      openModal(idx);
+      setupRoleSelector();
+    });
+  });
+
+  // Eventos: Activar / Desactivar usuario
+  tbody.querySelectorAll('.btn-toggle-user').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.currentTarget.getAttribute('data-idx'));
+      const db = getDatabase();
+      const user = db.users[idx];
+      if (!user) return;
+
+      const session = JSON.parse(localStorage.getItem('ebema_user_session') || '{}');
+      if (session.email === user.email) {
+        showAlert('No puede desactivar su propio usuario activo.', 'error');
+        return;
+      }
+
+      user.activo = user.activo === undefined ? false : !user.activo;
+      saveDatabase(db);
+      showAlert(`${user.name} ha sido ${user.activo ? 'activado' : 'desactivado'}.`);
+
+      const stageContainer = document.getElementById('stage-area');
+      if (stageContainer) renderRolesView(stageContainer);
+    });
+  });
+}

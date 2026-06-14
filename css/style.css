@@ -86,4 +86,8 @@ body {
   overflow-y: auto;
 }
 
-/* Bento card (ta
+/* Bento card (tarjeta de sección) */
+.bento-card {
+  background: white;
+  border: 1px solid #e1e3e4;
+}
