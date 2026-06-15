@@ -1,7 +1,7 @@
 // PANTALLA 1: Administrador de Tarifas Transporte — SIT EBEMA
 // Sub-módulos: Peajes, Combustibles y Rendimientos, Seguros y Permisos,
 // Variables Generales y Motor Actuarial (ZCAP) con exportación CSV.
-import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg } from './data.js';
+import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg, getOrigenGroups, getGroupRepId } from './data.js';
 import { CAP_LIST, truckTypesWithCap, calcularMatrizCostos } from './tarifas-engine.js';
 import { formatCLP, parseCSV, showAlert, toCSV, downloadFile, escapeHtml } from './utils.js';
 import { supabase } from './supabase-client.js';
@@ -47,6 +47,29 @@ function dateInput(path, value) {
 }
 function textInput(path, value, extra = '') {
   return `<input type="text" class="${inputCls} text-left" data-path="${path}" value="${value || ''}" ${extra}>`;
+}
+
+// Genera una tabla pivote compacta: filas = tipos de camión (CAP_LIST),
+// columnas = Centro Origen (groups). pathFn/valueFn reciben (repId, cap).
+function pivotCamionCentroTable(groups, pathFn, valueFn) {
+  return `
+    <div class="bg-surface border border-outline-variant overflow-x-auto rounded">
+      <table class="w-full zebra-table border-collapse">
+        <thead>
+          <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+            <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
+            ${groups.map(g => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">${g.nombre}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody class="font-body-md text-body-md">
+          ${CAP_LIST.map(cap => `
+            <tr class="border-b border-outline-variant">
+              <td class="p-md font-bold font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
+              ${groups.map(g => `<td class="p-sm w-28">${numInput(pathFn(g.repId, cap), valueFn(g.repId, cap))}</td>`).join('')}
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function readCSVFile(file, cb) {
@@ -880,7 +903,7 @@ function truckNumInput(id, field, value) {
 }
 
 function renderTarifasCamion(content, db, cfg) {
-  const centres = db.logisticsCentres;
+  const groups = getOrigenGroups(db);
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm">
@@ -890,15 +913,18 @@ function renderTarifasCamion(content, db, cfg) {
       </div>
       <p class="text-[12px] text-secondary mb-md">Tarifa Base y Tarifa/KM alimentan el Cotizador de Tarifas (servicio Exclusivo y Consolidado). Km Base y Costo Base son el tramo de referencia usado para fijar dichas tarifas. Use "Aplicar Motor ZCAP" para recalcular Tarifa Base y Tarifa/KM desde el costeo actuarial (promedio de rutas activas del centro, con margen de ganancia).</p>
 
-      ${centres.map(cd => {
-        const rows = (db.truckTypes || []).filter(t => t.Id_centro === cd.id);
+      ${groups.map(g => {
+        const rows = (db.truckTypes || []).filter(t => t.Id_centro === g.repId);
+        const integrantes = g.centros.length > 1
+          ? ` <span class="text-secondary text-[12px]">(${g.centros.map(c => c.nombre).join(', ')})</span>`
+          : '';
         return `
         <div class="mb-lg">
           <div class="flex items-center justify-between mb-xs">
-            <h3 class="font-body-lg text-body-lg font-bold text-on-surface">${cd.nombre} <span class="text-secondary font-data-mono text-[12px]">(${cd.id})</span></h3>
-            ${rows.length > 0 ? `<button class="tt-apply-zcap bg-primary hover:bg-[#930007] text-white font-bold px-md py-xs rounded flex items-center gap-xs text-[11px] uppercase" data-centro="${cd.id}">
+            <h3 class="font-body-lg text-body-lg font-bold text-on-surface">${g.nombre} <span class="text-secondary font-data-mono text-[12px]">(${g.centroIds.join(', ')})</span>${integrantes}</h3>
+            <button class="tt-apply-zcap bg-primary hover:bg-[#930007] text-white font-bold px-md py-xs rounded flex items-center gap-xs text-[11px] uppercase" data-grupo="${g.grupo}">
               <span class="material-symbols-outlined text-[16px]">calculate</span> Aplicar Motor ZCAP
-            </button>` : ''}
+            </button>
           </div>
           <div class="bg-surface border border-outline-variant overflow-hidden rounded">
             <table class="w-full zebra-table border-collapse">
@@ -948,9 +974,10 @@ function renderTarifasCamion(content, db, cfg) {
   // referencia usado para derivar la Tarifa Base (Costo Base = Tarifa Base).
   content.querySelectorAll('.tt-apply-zcap').forEach(btn => {
     btn.addEventListener('click', () => {
-      const centroId = btn.dataset.centro;
-      const matriz = calcularMatrizCostos(db, cfg).filter(m => m.centroId === centroId);
-      const rows = (db.truckTypes || []).filter(t => t.Id_centro === centroId);
+      const grupo = getOrigenGroups(db).find(g => g.grupo === btn.dataset.grupo);
+      if (!grupo) return;
+      const matriz = calcularMatrizCostos(db, cfg).filter(m => grupo.centroIds.includes(m.centroId));
+      const rows = (db.truckTypes || []).filter(t => t.Id_centro === grupo.repId);
       const margenPct = Number(cfg.variables.margenGanancia) || 0;
 
       let actualizados = 0;
@@ -981,7 +1008,7 @@ function renderTarifasCamion(content, db, cfg) {
 // SUB-MÓDULO 2: COMBUSTIBLES Y RENDIMIENTOS
 // ============================================================
 function renderCombustibles(content, db, cfg) {
-  const centres = db.logisticsCentres;
+  const groups = getOrigenGroups(db);
   const hoy = new Date();
 
   content.innerHTML = `
@@ -1002,8 +1029,8 @@ function renderCombustibles(content, db, cfg) {
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${centres.map(cd => {
-              const fuel = cfg.combustibles[cd.id] || {};
+            ${groups.map(g => {
+              const fuel = cfg.combustibles[g.repId] || {};
               let estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN DATOS</span>`;
               if (fuel.fecha) {
                 const dias = Math.floor((hoy - new Date(fuel.fecha)) / 86400000);
@@ -1011,10 +1038,13 @@ function renderCombustibles(content, db, cfg) {
                   ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]"><span class="material-symbols-outlined text-[14px]">warning</span> ${dias} DÍAS SIN ACTUALIZAR</span>`
                   : `<span class="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 font-label-caps text-[10px]">VIGENTE (${dias}D)</span>`;
               }
+              const integrantes = g.centros.length > 1
+                ? `<br><span class="text-secondary text-[11px]">${g.centros.map(c => c.nombre).join(', ')}</span>`
+                : '';
               return `<tr class="border-b border-outline-variant">
-                <td class="p-md font-bold">${cd.nombre}</td>
-                <td class="p-md w-40">${numInput(`combustibles.${cd.id}.precioLitro`, fuel.precioLitro)}</td>
-                <td class="p-md w-44">${dateInput(`combustibles.${cd.id}.fecha`, fuel.fecha)}</td>
+                <td class="p-md font-bold">${g.nombre}${integrantes}</td>
+                <td class="p-md w-40">${numInput(`combustibles.${g.repId}.precioLitro`, fuel.precioLitro)}</td>
+                <td class="p-md w-44">${dateInput(`combustibles.${g.repId}.fecha`, fuel.fecha)}</td>
                 <td class="p-md text-center">${estado}</td>
               </tr>`;
             }).join('')}
@@ -1059,7 +1089,7 @@ function renderCombustibles(content, db, cfg) {
 // SUB-MÓDULO 3: SEGUROS Y PERMISOS
 // ============================================================
 function renderSeguros(content, db, cfg) {
-  const centres = db.logisticsCentres;
+  const groups = getOrigenGroups(db);
   const ufVal = Number(cfg.variables.valorUF) || 0;
 
   content.innerHTML = `
@@ -1079,11 +1109,14 @@ function renderSeguros(content, db, cfg) {
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${centres.map(cd => {
-              const uf = Number(cfg.seguros[cd.id]) || 0;
+            ${groups.map(g => {
+              const uf = Number(cfg.seguros[g.repId]) || 0;
+              const integrantes = g.centros.length > 1
+                ? `<br><span class="text-secondary text-[11px]">${g.centros.map(c => c.nombre).join(', ')}</span>`
+                : '';
               return `<tr class="border-b border-outline-variant">
-                <td class="p-md font-bold">${cd.nombre}</td>
-                <td class="p-md w-32">${numInput(`seguros.${cd.id}`, uf)}</td>
+                <td class="p-md font-bold">${g.nombre}${integrantes}</td>
+                <td class="p-md w-32">${numInput(`seguros.${g.repId}`, uf)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(uf * ufVal)}</td>
               </tr>`;
             }).join('')}
@@ -1108,27 +1141,32 @@ function renderSeguros(content, db, cfg) {
         <input type="file" id="ps-csv" accept=".csv" class="text-[12px]">
       </div>
 
-      <div class="bg-surface border border-outline-variant overflow-hidden rounded">
+      <div class="bg-surface border border-outline-variant overflow-x-auto rounded">
         <table class="w-full zebra-table border-collapse">
           <thead>
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Permiso Circulación (anual)</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">SOAP (anual)</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase" rowspan="2">Tipo Camión</th>
+              ${groups.map(g => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center" colspan="2">${g.nombre}</th>`).join('')}
+            </tr>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              ${groups.map(() => `
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Permiso</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">SOAP</th>
+              `).join('')}
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${centres.map(cd => CAP_LIST.map(cap => {
-              const key = `${cd.id}|${cap}`;
-              const row = cfg.permisosSoap[key] || {};
-              return `<tr class="border-b border-outline-variant">
-                <td class="p-md font-bold">${cd.nombre}</td>
-                <td class="p-md font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
-                <td class="p-md w-36">${numInput(`permisosSoap.${key}.permiso`, row.permiso)}</td>
-                <td class="p-md w-36">${numInput(`permisosSoap.${key}.soap`, row.soap)}</td>
-              </tr>`;
-            }).join('')).join('')}
+            ${CAP_LIST.map(cap => `
+              <tr class="border-b border-outline-variant">
+                <td class="p-md font-bold font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
+                ${groups.map(g => {
+                  const key = `${g.repId}|${cap}`;
+                  const row = cfg.permisosSoap[key] || {};
+                  return `
+                  <td class="p-sm w-28">${numInput(`permisosSoap.${key}.permiso`, row.permiso)}</td>
+                  <td class="p-sm w-28">${numInput(`permisosSoap.${key}.soap`, row.soap)}</td>`;
+                }).join('')}
+              </tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -1141,10 +1179,10 @@ function renderSeguros(content, db, cfg) {
     readCSVFile(file, (rows) => {
       let count = 0;
       rows.forEach(row => {
-        const cd = centres.find(c => c.id === (row.Centro_SAP || '').trim());
+        const cd = db.logisticsCentres.find(c => c.id === (row.Centro_SAP || '').trim());
         const cap = parseCapKgFromCSV(row.Tipo_Camion_Kg);
         if (!cd || !CAP_LIST.includes(cap)) return;
-        const key = `${cd.id}|${cap}`;
+        const key = `${getGroupRepId(db, cd.id)}|${cap}`;
         cfg.permisosSoap[key] = {
           permiso: Number(row.Permiso_Circulacion) || 0,
           soap: Number(row.SOAP) || 0
@@ -1163,6 +1201,7 @@ function renderSeguros(content, db, cfg) {
 // ============================================================
 function renderVariables(content, db, cfg) {
   const centres = db.logisticsCentres;
+  const groups = getOrigenGroups(db);
   const v = cfg.variables;
   const hoy = new Date();
   let alertaUF = '';
@@ -1214,12 +1253,12 @@ function renderVariables(content, db, cfg) {
             ${numInput('variables.chofer.comisionPct', v.chofer.comisionPct)}
           </div>
         </div>
-        <p class="font-label-caps text-label-caps text-secondary mb-xs">SUELDO MÍNIMO POR CENTRO LOGÍSTICO (CLP)</p>
+        <p class="font-label-caps text-label-caps text-secondary mb-xs">SUELDO MÍNIMO POR CENTRO ORIGEN (CLP)</p>
         <div class="space-y-xs">
-          ${centres.map(cd => `
+          ${groups.map(g => `
             <div class="grid grid-cols-2 gap-md items-center">
-              <span class="text-[12px] text-secondary">${cd.nombre}</span>
-              ${numInput(`variables.chofer.sueldoMinimo.${cd.id}`, v.chofer.sueldoMinimo[cd.id])}
+              <span class="text-[12px] text-secondary">${g.nombre}</span>
+              ${numInput(`variables.chofer.sueldoMinimo.${g.repId}`, v.chofer.sueldoMinimo[g.repId])}
             </div>`).join('')}
         </div>
       </div>
@@ -1264,28 +1303,10 @@ function renderVariables(content, db, cfg) {
         <label class="font-label-caps text-label-caps text-secondary block">CICLO BASE AJUSTABLE (KM)</label>
         ${numInput('variables.mantencion.ciclo', v.mantencion.ciclo)}
       </div>
-      <p class="font-label-caps text-label-caps text-secondary mb-xs">COSTO DE MANTENCIÓN POR CENTRO Y TIPO DE CAMIÓN</p>
-      <div class="bg-surface border border-outline-variant overflow-hidden rounded">
-        <table class="w-full zebra-table border-collapse">
-          <thead>
-            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Mantención</th>
-            </tr>
-          </thead>
-          <tbody class="font-body-md text-body-md">
-            ${centres.map(cd => CAP_LIST.map(cap => {
-              const key = `${cd.id}|${cap}`;
-              return `<tr class="border-b border-outline-variant">
-                <td class="p-md font-bold">${cd.nombre}</td>
-                <td class="p-md font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
-                <td class="p-md w-36">${numInput(`variables.mantencion.costos.${key}`, (v.mantencion.costos || {})[key])}</td>
-              </tr>`;
-            }).join('')).join('')}
-          </tbody>
-        </table>
-      </div>
+      <p class="font-label-caps text-label-caps text-secondary mb-xs">COSTO DE MANTENCIÓN POR CENTRO ORIGEN Y TIPO DE CAMIÓN</p>
+      ${pivotCamionCentroTable(groups,
+        (repId, cap) => `variables.mantencion.costos.${repId}|${cap}`,
+        (repId, cap) => (v.mantencion.costos || {})[`${repId}|${cap}`])}
     </div>
 
     <!-- KM Mensuales Ofrecidos -->
@@ -1300,27 +1321,9 @@ function renderVariables(content, db, cfg) {
         </div>
         <input type="file" id="km-csv" accept=".csv" class="text-[12px]">
       </div>
-      <div class="bg-surface border border-outline-variant overflow-hidden rounded">
-        <table class="w-full zebra-table border-collapse">
-          <thead>
-            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Mensuales Ofrecidos</th>
-            </tr>
-          </thead>
-          <tbody class="font-body-md text-body-md">
-            ${centres.map(cd => CAP_LIST.map(cap => {
-              const key = `${cd.id}|${cap}`;
-              return `<tr class="border-b border-outline-variant">
-                <td class="p-md font-bold">${cd.nombre}</td>
-                <td class="p-md font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
-                <td class="p-md w-36">${numInput(`kmOfrecidos.${key}`, cfg.kmOfrecidos[key])}</td>
-              </tr>`;
-            }).join('')).join('')}
-          </tbody>
-        </table>
-      </div>
+      ${pivotCamionCentroTable(groups,
+        (repId, cap) => `kmOfrecidos.${repId}|${cap}`,
+        (repId, cap) => cfg.kmOfrecidos[`${repId}|${cap}`])}
     </div>
 
     <!-- Costos Base (Referencia) -->
@@ -1358,7 +1361,7 @@ function renderVariables(content, db, cfg) {
         const cd = centres.find(c => c.id === (row.Centro_SAP || '').trim());
         const cap = parseCapKgFromCSV(row.Tipo_Camion_Kg);
         if (!cd || !CAP_LIST.includes(cap)) return;
-        cfg.kmOfrecidos[`${cd.id}|${cap}`] = Number(row.KM_Mensual) || 0;
+        cfg.kmOfrecidos[`${getGroupRepId(db, cd.id)}|${cap}`] = Number(row.KM_Mensual) || 0;
         count++;
       });
       saveDatabase(db);

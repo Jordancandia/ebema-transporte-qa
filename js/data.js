@@ -18,7 +18,8 @@ const TABLE_MAP = [
   { local: 'users',             table: 'app_users',          pk: 'email' },
   { local: 'providers',         table: 'providers',          pk: 'email' },
   { local: 'tariffConfig',       table: 'tariff_config',        pk: 'id' },
-  { local: 'clientTariffConfig', table: 'client_tariff_config', pk: 'id' }
+  { local: 'clientTariffConfig', table: 'client_tariff_config', pk: 'id' },
+  { local: 'routeTolls',         table: 'route_tolls',          pk: 'id' }
 ];
 
 // Capacidad nominal en KG a partir del nombre del tipo de camión (ej: "Camión 28 Ton" -> 28000)
@@ -62,6 +63,62 @@ function buildTruckTypes(centres, baseTypes = TRUCK_BASE_TYPES) {
     });
   });
   return out;
+}
+
+// Convierte un código de grupo de origen (ej: "SAN BERNARDO") a un nombre legible
+// (ej: "San Bernardo").
+function tituloGrupo(grupo) {
+  return String(grupo || '')
+    .toLowerCase()
+    .split(' ')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+// Agrupa los centros logísticos por "Centro Origen" (campo origen_grupo). Cada
+// grupo comparte una sola configuración de tarifas/costos (truckTypes,
+// combustibles, seguros, permisos/SOAP, sueldos, mantención, km ofrecidos),
+// almacenada bajo el id del centro "representante" del grupo (repId).
+// Ej: SANTIAGO agrupa los centros 1001, 1002, 1003 (representante: 1003 / CD RM).
+export function getOrigenGroups(db) {
+  const centres = db.logisticsCentres || [];
+  const order = [];
+  const map = {};
+  centres.forEach(cd => {
+    const g = cd.origen_grupo || cd.id;
+    if (!map[g]) {
+      map[g] = { grupo: g, centros: [] };
+      order.push(g);
+    }
+    map[g].centros.push(cd);
+  });
+  return order.map(g => {
+    const entry = map[g];
+    const conTipos = entry.centros.find(cd => (db.truckTypes || []).some(t => t.Id_centro === cd.id));
+    const rep = conTipos || entry.centros[0];
+    const nombre = entry.centros.length > 1 ? tituloGrupo(entry.grupo) : rep.nombre;
+    return {
+      grupo: entry.grupo,
+      nombre,
+      centros: entry.centros,
+      centroIds: entry.centros.map(cd => cd.id),
+      repId: rep.id
+    };
+  });
+}
+
+// Devuelve el id del centro "representante" del Centro Origen al que pertenece
+// centroId. Se usa para resolver, "por detrás", la configuración compartida
+// (truckTypes, combustibles, seguros, permisos/SOAP, sueldos, mantención, km
+// ofrecidos) de todos los centros de un mismo grupo de origen.
+export function getGroupRepId(db, centroId) {
+  const centres = db.logisticsCentres || [];
+  const cd = centres.find(c => c.id === centroId);
+  if (!cd) return centroId;
+  const g = cd.origen_grupo || cd.id;
+  const grupo = centres.filter(c => (c.origen_grupo || c.id) === g);
+  const conTipos = grupo.find(c => (db.truckTypes || []).some(t => t.Id_centro === c.id));
+  return (conTipos || grupo[0]).id;
 }
 
 // Derivar las tablas normalizadas transports_camiones / transports_choferes
@@ -482,7 +539,10 @@ const defaultData = {
   ],
 
   // 9. Zonas de Transporte (destinos: País, Zona, Denominación, Comuna, Región, Tipo, Estado ERP)
-  transportZones: []
+  transportZones: [],
+
+  // 10. Peajes por ruta (ida/vuelta, por tipo de camión según ejes: 2 o 3)
+  routeTolls: []
 };
 
 // Obtener la base de datos en memoria (Supabase) o respaldo local
@@ -542,6 +602,12 @@ export function getDatabase() {
     migrado = true;
   }
 
+  // Migración: Asegurar que existe la colección de Peajes por Ruta
+  if (!parsed.routeTolls) {
+    parsed.routeTolls = [];
+    migrado = true;
+  }
+
   // Migración: Tarifas de transporte POR CENTRO (Id_centro, Kmbase, baseKM, id sintético)
   if (!parsed.truckTypes || !parsed.truckTypes.some(t => t.Id_centro && t.id)) {
     const centres = (parsed.logisticsCentres && parsed.logisticsCentres.length)
@@ -553,6 +619,19 @@ export function getDatabase() {
       : TRUCK_BASE_TYPES;
     parsed.truckTypes = buildTruckTypes(centres, baseTypes);
     migrado = true;
+  }
+
+  // Migración: asegurar que cada Centro Origen (grupo de centros, ej. SANTIAGO =
+  // 1001/1002/1003) tenga la estructura de 4 tipos de camión (5/10/15/28 Ton)
+  // bajo su centro representante.
+  if (parsed.logisticsCentres) {
+    getOrigenGroups(parsed).forEach(g => {
+      const tieneTipos = (parsed.truckTypes || []).some(t => t.Id_centro === g.repId);
+      if (!tieneTipos) {
+        parsed.truckTypes = (parsed.truckTypes || []).concat(buildTruckTypes([{ id: g.repId }]));
+        migrado = true;
+      }
+    });
   }
 
   // Migración: Característica de rutas (NORMAL / EXTREMA / ISLA)
