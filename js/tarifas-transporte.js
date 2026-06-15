@@ -15,10 +15,12 @@ let pjFiltroComuna = '';
 let pjFiltroCentro = '';
 let pjFiltroClasificacion = '';
 let pjFiltroPendientes = false;
+let pjFiltroTipo = '';
 
 // Estado de filtros de la vista "Motor ZCAP — Resultados"
 let zcapFiltroCentro = ''; // origen_grupo (Centro Origen); '' = todos
 let zcapFiltroClasif = ''; // 'Regional' | 'Interregional'; '' = todas
+let tarifaCentroFiltro = '';
 
 // ---------- Helpers genéricos ----------
 function setPath(obj, path, value) {
@@ -173,18 +175,22 @@ function tollNumInput(routeId, ejes, field, value) {
 
 // Vista combinada: cálculo automático (route_tolls) + registro manual (cfg.peajes)
 function renderPeajes(content, db, cfg) {
-  content.innerHTML = `<div id="pj-auto"></div><div id="pj-manual" class="mt-xl"></div>`;
-  renderPeajesAuto(document.getElementById('pj-auto'), db, cfg);
-  renderPeajesManual(document.getElementById('pj-manual'), db, cfg);
+  renderPeajesAuto(content, db, cfg);
 }
 
 // ---------- Cálculo Automático de Peajes (Google Routes API) ----------
 function renderPeajesAuto(content, db, cfg) {
   const routes = (db.routes || []).filter(r => r.activo);
-  const comunas = [...new Set(routes.map(r => r.comuna).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const centrosOrigen = [...new Set(routes.map(r => r.origenId).filter(Boolean))]
-    .map(id => ({ id, nombre: getCentreName(db, id) || id }))
-    .sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  // COMMUNE filter: only zones with tipo=COMUNA
+  const zonasComunas = (db.transportZones || []).filter(z => z.tipo === 'Comuna');
+  const comunasDisponibles = [...new Map(
+    zonasComunas.map(z => [z.zona, { id: z.zona, label: z.denominacion || z.zona }])
+  ).values()].sort((a, b) => a.label.localeCompare(b.label));
+
+  // Centro Origen: groups
+  const grupos = getOrigenGroups(db);
+  const centrosOrigen = grupos.map(g => ({ id: g.grupo, nombre: g.nombre }));
 
   // Construir filas (ruta x tipo de eje)
   let rows = [];
@@ -195,15 +201,18 @@ function renderPeajesAuto(content, db, cfg) {
   });
 
   // Aplicar filtros de pantalla
-  if (pjFiltroTexto.trim()) {
-    const q = pjFiltroTexto.trim().toLowerCase();
-    rows = rows.filter(r => (r.ruta.codigo || '').toLowerCase().includes(q) || (r.ruta.destino || '').toLowerCase().includes(q));
-  }
   if (pjFiltroComuna) {
-    rows = rows.filter(r => r.ruta.comuna === pjFiltroComuna);
+    rows = rows.filter(r => r.ruta.id_zona_transporte === pjFiltroComuna);
+  }
+  if (pjFiltroTipo) {
+    rows = rows.filter(r => {
+      const z = (db.transportZones || []).find(z => z.zona === r.ruta.id_zona_transporte);
+      return z && z.tipo === pjFiltroTipo;
+    });
   }
   if (pjFiltroCentro) {
-    rows = rows.filter(r => r.ruta.origenId === pjFiltroCentro);
+    const g = grupos.find(g => g.grupo === pjFiltroCentro);
+    if (g) rows = rows.filter(r => g.centroIds.includes(r.ruta.origenId));
   }
   if (pjFiltroClasificacion) {
     rows = rows.filter(r => r.ruta.clasificRuta === pjFiltroClasificacion);
@@ -258,14 +267,18 @@ function renderPeajesAuto(content, db, cfg) {
 
       <div class="flex flex-wrap gap-sm items-end mb-md">
         <div class="space-y-xs">
-          <label class="font-label-caps text-label-caps text-secondary block">BUSCAR RUTA</label>
-          <input id="pj-f-texto" type="text" placeholder="Código o destino..." value="${escapeHtml(pjFiltroTexto)}" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-56">
+          <label class="font-label-caps text-label-caps text-secondary block">TIPO</label>
+          <select id="pj-f-tipo" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-36">
+            <option value="">Todos</option>
+            <option value="Comuna" ${pjFiltroTipo === 'Comuna' ? 'selected' : ''}>COMUNA</option>
+            <option value="Sector" ${pjFiltroTipo === 'Sector' ? 'selected' : ''}>SECTOR</option>
+          </select>
         </div>
         <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary block">COMUNA</label>
-          <select id="pj-f-comuna" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48">
+          <select id="pj-f-comuna" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-52">
             <option value="">Todas</option>
-            ${comunas.map(c => `<option value="${escapeHtml(c)}" ${c === pjFiltroComuna ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+            ${comunasDisponibles.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === pjFiltroComuna ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
           </select>
         </div>
         <div class="space-y-xs">
@@ -304,14 +317,14 @@ function renderPeajesAuto(content, db, cfg) {
         <table class="w-full zebra-table border-collapse">
           <thead>
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md"><input type="checkbox" id="pj-check-all" title="Seleccionar todas"></th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Origen</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Destino</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo de Camión</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peaje Ida</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peaje Vuelta</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Ida</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Vuelta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Estado</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Acciones</th>
             </tr>
@@ -319,7 +332,9 @@ function renderPeajesAuto(content, db, cfg) {
           <tbody class="font-body-md text-body-md">
             ${displayRows.length === 0 ? `<tr><td colspan="10" class="p-md text-center text-secondary">No hay rutas que coincidan con los filtros.</td></tr>` :
               displayRows.map(({ ruta, ejes, toll }) => {
-                const origenNombre = getCentreName(db, ruta.origenId);
+                const grupo = grupos.find(g => g.centroIds.includes(ruta.origenId));
+                const origenNombre = grupo ? grupo.nombre : (getCentreName(db, ruta.origenId) || '');
+                const kmTotal = toll && toll.km_ida != null ? (toll.km_ida * 2).toFixed(1) : '—';
                 let estado;
                 if (!toll || !toll.calculado_en) {
                   estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN CALCULAR</span>`;
@@ -330,14 +345,14 @@ function renderPeajesAuto(content, db, cfg) {
                 }
                 const trCls = toll && toll.needs_review ? 'border-b border-outline-variant bg-red-50' : 'border-b border-outline-variant';
                 return `<tr class="${trCls}">
+                  <td class="p-md"><input type="checkbox" class="pj-row-check" data-route-id="${escapeHtml(ruta.id)}"></td>
                   <td class="p-md font-bold">${escapeHtml(ruta.codigo || '')}</td>
-                  <td class="p-md">${escapeHtml(origenNombre || '')}</td>
+                  <td class="p-md">${escapeHtml(origenNombre)}</td>
                   <td class="p-md">${escapeHtml(ruta.destino || '')}</td>
                   <td class="p-md">${EJES_LABELS[ejes]}</td>
                   <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_ida', toll ? toll.peaje_ida : 0)}</td>
                   <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_vuelta', toll ? toll.peaje_vuelta : 0)}</td>
-                  <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_ida != null ? toll.km_ida : '—'}</td>
-                  <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_vuelta != null ? toll.km_vuelta : '—'}</td>
+                  <td class="p-md text-right font-data-mono text-data-mono">${kmTotal}</td>
                   <td class="p-md text-center">${estado}</td>
                   <td class="p-md text-center">
                     <button class="pj-calc-row text-secondary hover:text-primary" data-calc-route="${escapeHtml(ruta.id)}" title="Calcular peaje de esta ruta">
@@ -372,19 +387,33 @@ function renderPeajesAuto(content, db, cfg) {
     });
   });
 
-  document.getElementById('pj-f-texto').addEventListener('change', (e) => { pjFiltroTexto = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-tipo').addEventListener('change', (e) => { pjFiltroTipo = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-origen').addEventListener('change', (e) => { pjFiltroCentro = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-clasif').addEventListener('change', (e) => { pjFiltroClasificacion = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-export').addEventListener('click', () => exportPeajesCSV(db, rows));
   document.getElementById('pj-carga-comuna').addEventListener('click', () => abrirModalCargaPeajesComuna(content, db, cfg));
-  document.getElementById('pj-calcular').addEventListener('click', () => {
-    const rutasUnicas = [...new Set(rows.map(r => r.ruta))];
-    calcularPeajes(content, db, cfg, rutasUnicas);
+
+  // Select-all checkbox
+  document.getElementById('pj-check-all').addEventListener('change', (e) => {
+    content.querySelectorAll('.pj-row-check').forEach(cb => { cb.checked = e.target.checked; });
   });
+
+  // Calcular: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
+  document.getElementById('pj-calcular').addEventListener('click', () => {
+    const checked = [...content.querySelectorAll('.pj-row-check:checked')].map(cb => cb.dataset.routeId);
+    let rutasTarget;
+    if (checked.length > 0) {
+      rutasTarget = [...new Set(checked)].map(id => routes.find(r => r.id === id)).filter(Boolean);
+    } else {
+      rutasTarget = [...new Set(rows.map(r => r.ruta))];
+    }
+    calcularPeajes(content, db, cfg, rutasTarget);
+  });
+
   content.querySelectorAll('[data-calc-route]').forEach(btn => {
     btn.addEventListener('click', () => {
       const ruta = routes.find(r => r.id === btn.dataset.calcRoute);
@@ -392,17 +421,23 @@ function renderPeajesAuto(content, db, cfg) {
     });
   });
 }
-
 function exportPeajesCSV(db, rows) {
-  const headers = ['RUTA', 'ORIGEN', 'DESTINO', 'TIPO_DE_CAMION', 'PEAJE_IDA', 'PEAJE_VUELTA'];
-  const data = rows.map(({ ruta, ejes, toll }) => [
-    ruta.codigo,
-    getCentreName(db, ruta.origenId) || '',
-    ruta.destino || '',
-    EJES_LABELS[ejes],
-    toll ? Math.round(toll.peaje_ida || 0) : 0,
-    toll ? Math.round(toll.peaje_vuelta || 0) : 0
-  ]);
+  const grupos = getOrigenGroups(db);
+  const headers = ['RUTA', 'ORIGEN', 'DESTINO', 'TIPO_DE_CAMION', 'PEAJE_IDA', 'PEAJE_VUELTA', 'KM'];
+  const data = rows.map(({ ruta, ejes, toll }) => {
+    const grupo = grupos.find(g => g.centroIds.includes(ruta.origenId));
+    const origen = grupo ? grupo.nombre : (getCentreName(db, ruta.origenId) || '');
+    const km = toll && toll.km_ida != null ? (toll.km_ida * 2).toFixed(1) : '';
+    return [
+      ruta.codigo,
+      origen,
+      ruta.destino || '',
+      EJES_LABELS[ejes],
+      toll ? Math.round(toll.peaje_ida || 0) : 0,
+      toll ? Math.round(toll.peaje_vuelta || 0) : 0,
+      km
+    ];
+  });
   downloadFile(`peajes_rutas_${Date.now()}.csv`, toCSV(headers, data));
   showAlert('Archivo CSV de peajes exportado');
 }
@@ -928,11 +963,8 @@ function syncTarifasZcap(db, cfg, grupoFiltro = '') {
       conZcap.add(t.id);
       const avgCostoKmFinal = items.reduce((s, m) => s + m.item11_costoKmFinal, 0) / items.length;
       const ratePerKm = Math.round(avgCostoKmFinal * (1 + margenPct / 100));
-      const kmBase = Number(t.Kmbase) || 0;
-      const baseRate = Math.round(ratePerKm * kmBase);
-      if (t.ratePerKm !== ratePerKm || t.baseRate !== baseRate) {
+      if (t.ratePerKm !== ratePerKm) {
         t.ratePerKm = ratePerKm;
-        t.baseRate = baseRate;
         cambios = true;
       }
     });
@@ -943,7 +975,10 @@ function syncTarifasZcap(db, cfg, grupoFiltro = '') {
 }
 
 function renderTarifasCamion(content, db, cfg) {
-  const groups = getOrigenGroups(db);
+  const allGroups = getOrigenGroups(db);
+  const groups = tarifaCentroFiltro
+    ? allGroups.filter(g => g.grupo === tarifaCentroFiltro)
+    : allGroups;
   const conZcap = syncTarifasZcap(db, cfg);
 
   content.innerHTML = `
@@ -952,7 +987,17 @@ function renderTarifasCamion(content, db, cfg) {
         <span class="material-symbols-outlined text-primary">local_shipping</span>
         <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Tarifas de Transporte por Centro y Tipo de Camión</h2>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Tarifa/KM se calcula automáticamente desde el Motor ZCAP (costo/km final promedio de las rutas activas del centro, con margen de ganancia) y es de solo lectura. Tarifa Base = Tarifa/KM × Km Base, también calculada. Km Base y Costo Base son editables y definen el tramo de referencia.</p>
+      <p class="text-[12px] text-secondary mb-md">Tarifa Base (KM) es editable directamente. Tarifa/KM se calcula automáticamente desde el Motor ZCAP (costo/km final promedio de las rutas activas del centro, con margen de ganancia) y es de solo lectura. Km Base y Costo Base son editables y definen el tramo de referencia.</p>
+
+      <div class="flex items-end gap-sm mb-md">
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">CENTRO ORIGEN</label>
+          <select id="tt-f-centro" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-52">
+            <option value="">Todos</option>
+            ${allGroups.map(g => `<option value="${escapeHtml(g.grupo)}" ${g.grupo === tarifaCentroFiltro ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
 
       ${groups.map(g => {
         const rows = (db.truckTypes || []).filter(t => t.Id_centro === g.repId);
@@ -976,7 +1021,7 @@ function renderTarifasCamion(content, db, cfg) {
                   <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Capacidad</th>
                   <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Km Base</th>
                   <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Base</th>
-                  <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Tarifa Base</th>
+                  <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Tarifa Base (KM)</th>
                   <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Tarifa / KM</th>
                 </tr>
               </thead>
@@ -988,7 +1033,7 @@ function renderTarifasCamion(content, db, cfg) {
                     <td class="p-md">${t.capacityTons}</td>
                     <td class="p-md w-28">${truckNumInput(t.id, 'Kmbase', t.Kmbase)}</td>
                     <td class="p-md w-32">${truckNumInput(t.id, 'baseKM', t.baseKM)}</td>
-                    <td class="p-md w-32 text-right font-data-mono">${formatCLP(t.baseRate)}</td>
+                    <td class="p-md w-32">${truckNumInput(t.id, 'baseRate', t.baseRate)}</td>
                     <td class="p-md w-28 text-right font-data-mono">${formatCLP(t.ratePerKm)}${conZcap.has(t.id) ? '' : `<div class="text-[11px] text-secondary normal-case">Sin rutas activas</div>`}</td>
                   </tr>`).join('')}
               </tbody>
@@ -1009,6 +1054,11 @@ function renderTarifasCamion(content, db, cfg) {
       saveDatabase(db);
       if (field === 'Kmbase') renderTarifasCamion(content, db, cfg);
     });
+  });
+
+  document.getElementById('tt-f-centro').addEventListener('change', (e) => {
+    tarifaCentroFiltro = e.target.value;
+    renderTarifasCamion(content, db, cfg);
   });
 
   content.querySelectorAll('.tt-add-types').forEach(btn => {
@@ -1114,14 +1164,22 @@ function renderCombustibles(content, db, cfg) {
 function renderSeguros(content, db, cfg) {
   const groups = getOrigenGroups(db);
   const ufVal = Number(cfg.variables.valorUF) || 0;
+  if (!cfg.soapTransversal) cfg.soapTransversal = {};
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
-      <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
-        <span class="material-symbols-outlined text-primary">shield</span>
-        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Seguro de Carga (Colectivo Corporativo)</h2>
+      <div class="flex items-center justify-between gap-sm mb-md border-b border-outline-variant pb-sm">
+        <div class="flex items-center gap-sm">
+          <span class="material-symbols-outlined text-primary">shield</span>
+          <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Seguro de Carga (Colectivo Corporativo)</h2>
+        </div>
+        <div class="flex items-center gap-sm">
+          <label class="font-label-caps text-label-caps text-secondary text-[11px]">Valor UF:</label>
+          <input id="seg-uf-live" type="number" min="0" step="1" value="${ufVal}" data-path="variables.valorUF"
+            class="border border-[#CED4DA] p-xs font-data-mono text-data-mono w-28 text-right">
+        </div>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Valor base mensual en UF por centro. Se convierte a CLP usando el Valor UF indexado (Variables Generales). UF actual: <b>${formatCLP(ufVal)}</b></p>
+      <p class="text-[12px] text-secondary mb-md">Valor base mensual en UF por centro. Se convierte a CLP usando el Valor UF indexado. UF actual: <b id="seg-uf-display">${formatCLP(ufVal)}</b></p>
       <div class="bg-surface border border-outline-variant overflow-hidden rounded">
         <table class="w-full zebra-table border-collapse">
           <thead>
@@ -1140,9 +1198,34 @@ function renderSeguros(content, db, cfg) {
               return `<tr class="border-b border-outline-variant">
                 <td class="p-md font-bold">${g.nombre}${integrantes}</td>
                 <td class="p-md w-32">${numInput(`seguros.${g.repId}`, uf)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(uf * ufVal)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono seg-clp-cell" data-uf="${uf}">${formatCLP(uf * ufVal)}</td>
               </tr>`;
             }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
+      <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
+        <span class="material-symbols-outlined text-primary">directions_car</span>
+        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">SOAP por Tipo de Camión (Transversal)</h2>
+      </div>
+      <p class="text-[12px] text-secondary mb-md">Valor anual promediado de SOAP, igual para todos los centros (valor transversal). Se aplica internamente en el Motor ZCAP para cada centro según el tipo de camión.</p>
+      <div class="bg-surface border border-outline-variant overflow-hidden rounded">
+        <table class="w-full zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo de Camión</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Valor SOAP Anual (CLP)</th>
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            ${CAP_LIST.map(cap => `
+              <tr class="border-b border-outline-variant">
+                <td class="p-md font-bold font-data-mono text-data-mono">${(cap / 1000)}.000 kg</td>
+                <td class="p-md w-40">${numInput(`soapTransversal.${cap}`, cfg.soapTransversal[cap] || 0)}</td>
+              </tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -1151,15 +1234,15 @@ function renderSeguros(content, db, cfg) {
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm">
       <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
         <span class="material-symbols-outlined text-primary">badge</span>
-        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Permiso de Circulación y SOAP (Anual Promediado)</h2>
+        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Permiso de Circulación (Anual Promediado)</h2>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Tabla relacional indexada por Centro Logístico y Tipo de Camión. Edición inline o carga masiva CSV (columnas: Centro_SAP, Tipo_Camion_Kg, Permiso_Circulacion, SOAP).</p>
+      <p class="text-[12px] text-secondary mb-md">Tabla relacional indexada por Centro Logístico y Tipo de Camión. Edición inline o carga masiva CSV (columnas: Centro_SAP, Tipo_Camion_Kg, Permiso_Circulacion).</p>
 
       <div class="flex items-center gap-md bg-surface-container-low p-md rounded mb-md">
         <span class="material-symbols-outlined text-secondary">upload_file</span>
         <div class="flex-1">
-          <p class="font-body-md text-body-md font-bold text-on-surface">Carga masiva CSV — Permiso y SOAP</p>
-          <p class="text-[11px] text-secondary">Columnas: Centro_SAP, Tipo_Camion_Kg, Permiso_Circulacion, SOAP</p>
+          <p class="font-body-md text-body-md font-bold text-on-surface">Carga masiva CSV — Permiso de Circulación</p>
+          <p class="text-[11px] text-secondary">Columnas: Centro_SAP, Tipo_Camion_Kg, Permiso_Circulacion</p>
         </div>
         <input type="file" id="ps-csv" accept=".csv" class="text-[12px]">
       </div>
@@ -1168,14 +1251,8 @@ function renderSeguros(content, db, cfg) {
         <table class="w-full zebra-table border-collapse">
           <thead>
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase" rowspan="2">Tipo Camión</th>
-              ${groups.map(g => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center" colspan="2">${g.nombre}</th>`).join('')}
-            </tr>
-            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              ${groups.map(() => `
-                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Permiso</th>
-                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">SOAP</th>
-              `).join('')}
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
+              ${groups.map(g => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">${g.nombre}</th>`).join('')}
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
@@ -1185,9 +1262,7 @@ function renderSeguros(content, db, cfg) {
                 ${groups.map(g => {
                   const key = `${g.repId}|${cap}`;
                   const row = cfg.permisosSoap[key] || {};
-                  return `
-                  <td class="p-sm w-28">${numInput(`permisosSoap.${key}.permiso`, row.permiso)}</td>
-                  <td class="p-sm w-28">${numInput(`permisosSoap.${key}.soap`, row.soap)}</td>`;
+                  return `<td class="p-sm w-32">${numInput(`permisosSoap.${key}.permiso`, row.permiso)}</td>`;
                 }).join('')}
               </tr>`).join('')}
           </tbody>
@@ -1195,6 +1270,36 @@ function renderSeguros(content, db, cfg) {
       </div>
     </div>
   `;
+
+  // UF live update — update CLP cells without full re-render
+  document.getElementById('seg-uf-live').addEventListener('input', (e) => {
+    const newUF = Number(e.target.value) || 0;
+    document.getElementById('seg-uf-display').textContent = formatCLP(newUF);
+    content.querySelectorAll('.seg-clp-cell').forEach(cell => {
+      const uf = Number(cell.dataset.uf) || 0;
+      cell.textContent = formatCLP(uf * newUF);
+    });
+  });
+
+  // Also update UF cells when the seguros UF input loses focus (sync with cfg)
+  document.getElementById('seg-uf-live').addEventListener('change', (e) => {
+    cfg.variables.valorUF = Number(e.target.value) || 0;
+    saveDatabase(db);
+  });
+
+  // Seguros UF — also update CLP when the per-center UF field changes
+  content.querySelectorAll('[data-path^="seguros."]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const currentUF = Number(document.getElementById('seg-uf-live').value) || 0;
+      content.querySelectorAll('.seg-clp-cell').forEach((cell, i) => {
+        const g = groups[i];
+        if (!g) return;
+        const uf = Number(cfg.seguros[g.repId]) || 0;
+        cell.dataset.uf = uf;
+        cell.textContent = formatCLP(uf * currentUF);
+      });
+    });
+  });
 
   document.getElementById('ps-csv').addEventListener('change', (e) => {
     const file = e.target.files[0];
@@ -1206,19 +1311,16 @@ function renderSeguros(content, db, cfg) {
         const cap = parseCapKgFromCSV(row.Tipo_Camion_Kg);
         if (!cd || !CAP_LIST.includes(cap)) return;
         const key = `${getGroupRepId(db, cd.id)}|${cap}`;
-        cfg.permisosSoap[key] = {
-          permiso: Number(row.Permiso_Circulacion) || 0,
-          soap: Number(row.SOAP) || 0
-        };
+        cfg.permisosSoap[key] = cfg.permisosSoap[key] || {};
+        cfg.permisosSoap[key].permiso = Number(row.Permiso_Circulacion) || 0;
         count++;
       });
       saveDatabase(db);
-      showAlert(`${count} registros de Permiso/SOAP actualizados`);
+      showAlert(`${count} registros de Permiso de Circulación actualizados`);
       renderSeguros(content, db, cfg);
     });
   });
 }
-
 // ============================================================
 // SUB-MÓDULO 4: VARIABLES GENERALES
 // ============================================================

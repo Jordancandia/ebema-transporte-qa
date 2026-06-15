@@ -186,6 +186,7 @@ export function defaultTariffConfig() {
     seguros: {},
     // Permiso de circulación + SOAP anual — { 'centroId|capKg': { permiso, soap } }
     permisosSoap: {},
+    soapTransversal: {},
     // KM Mensuales Ofrecidos — { 'centroId|capKg': km }
     kmOfrecidos: {},
     // Sub-módulo 4: Variables generales
