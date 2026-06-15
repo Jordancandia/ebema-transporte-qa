@@ -11,6 +11,7 @@ let activeSub = 'peajes';
 // Estado de filtros de la vista "Peajes por Ruta — Cálculo Automático"
 let pjFiltroTexto = '';
 let pjFiltroComuna = '';
+let pjFiltroCentro = '';
 let pjFiltroPendientes = false;
 
 // ---------- Helpers genéricos ----------
@@ -152,6 +153,9 @@ function renderPeajes(content, db, cfg) {
 function renderPeajesAuto(content, db, cfg) {
   const routes = (db.routes || []).filter(r => r.activo);
   const comunas = [...new Set(routes.map(r => r.comuna).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const centrosOrigen = [...new Set(routes.map(r => r.origenId).filter(Boolean))]
+    .map(id => ({ id, nombre: getCentreName(db, id) || id }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
   // Construir filas (ruta x tipo de eje)
   let rows = [];
@@ -168,6 +172,9 @@ function renderPeajesAuto(content, db, cfg) {
   }
   if (pjFiltroComuna) {
     rows = rows.filter(r => r.ruta.comuna === pjFiltroComuna);
+  }
+  if (pjFiltroCentro) {
+    rows = rows.filter(r => r.ruta.origenId === pjFiltroCentro);
   }
   if (pjFiltroPendientes) {
     rows = rows.filter(r => !r.toll || !r.toll.calculado_en || r.toll.needs_review);
@@ -230,6 +237,13 @@ function renderPeajesAuto(content, db, cfg) {
           </select>
         </div>
         <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">CENTRO ORIGEN</label>
+          <select id="pj-f-origen" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48">
+            <option value="">Todos</option>
+            ${centrosOrigen.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === pjFiltroCentro ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary flex items-center gap-xs cursor-pointer">
             <input type="checkbox" id="pj-f-pend" ${pjFiltroPendientes ? 'checked' : ''}> SOLO PENDIENTES / REVISIÓN
           </label>
@@ -256,10 +270,11 @@ function renderPeajesAuto(content, db, cfg) {
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Ida</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM Vuelta</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Estado</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Acciones</th>
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${displayRows.length === 0 ? `<tr><td colspan="9" class="p-md text-center text-secondary">No hay rutas que coincidan con los filtros.</td></tr>` :
+            ${displayRows.length === 0 ? `<tr><td colspan="10" class="p-md text-center text-secondary">No hay rutas que coincidan con los filtros.</td></tr>` :
               displayRows.map(({ ruta, ejes, toll }) => {
                 const origenNombre = getCentreName(db, ruta.origenId);
                 let estado;
@@ -281,6 +296,11 @@ function renderPeajesAuto(content, db, cfg) {
                   <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_ida != null ? toll.km_ida : '—'}</td>
                   <td class="p-md text-right font-data-mono text-data-mono">${toll && toll.km_vuelta != null ? toll.km_vuelta : '—'}</td>
                   <td class="p-md text-center">${estado}</td>
+                  <td class="p-md text-center">
+                    <button class="pj-calc-row text-secondary hover:text-primary" data-calc-route="${escapeHtml(ruta.id)}" title="Calcular peaje de esta ruta">
+                      <span class="material-symbols-outlined text-[18px]">calculate</span>
+                    </button>
+                  </td>
                 </tr>`;
               }).join('')}
           </tbody>
@@ -311,13 +331,20 @@ function renderPeajesAuto(content, db, cfg) {
 
   document.getElementById('pj-f-texto').addEventListener('change', (e) => { pjFiltroTexto = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-origen').addEventListener('change', (e) => { pjFiltroCentro = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-export').addEventListener('click', () => exportPeajesCSV(db, rows));
   document.getElementById('pj-calcular').addEventListener('click', () => {
     const rutasUnicas = [...new Set(rows.map(r => r.ruta))];
     calcularPeajes(content, db, cfg, rutasUnicas);
+  });
+  content.querySelectorAll('[data-calc-route]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ruta = routes.find(r => r.id === btn.dataset.calcRoute);
+      if (ruta) calcularPeajes(content, db, cfg, [ruta]);
+    });
   });
 }
 
