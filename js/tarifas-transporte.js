@@ -446,12 +446,21 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Invoca la Edge Function 'route-tolls' (proxy seguro hacia TollGuru API)
-async function callRouteTolls(origin, destination, vehicleType) {
-  const { data, error } = await supabase.functions.invoke('route-tolls', { body: { origin, destination, vehicleType } });
+// Invoca la Edge Function 'getapi-tolls' (proxy seguro hacia chile.getapi.cl)
+// Ambos tipos de camión EBEMA (2 ejes y 3 ejes) → categoría PESADO en GetAPI.
+// No retorna km (GetAPI no entrega distancia).
+async function callGetApiTolls(origin, destination) {
+  const { data, error } = await supabase.functions.invoke('getapi-tolls', {
+    body: {
+      originLat: origin.lat,
+      originLng: origin.lng,
+      destLat: destination.lat,
+      destLng: destination.lng
+    }
+  });
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
-  return data;
+  return data; // { tollCLP, hasToll, tollsCount, details }
 }
 
 // Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
@@ -721,9 +730,10 @@ function createProgressModal(total) {
   };
 }
 
-// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas: para
-// cada ruta consulta la Edge Function 'route-tolls' Ida y Vuelta (0.5s de
-// espera entre consultas) y guarda el resultado para 2 y 3 ejes.
+// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas usando GetAPI Chile.
+// GetAPI solo distingue LIVIANO/PESADO → todos los camiones EBEMA son PESADO.
+// Se hacen 2 consultas por ruta (Ida + Vuelta); el mismo resultado se asigna a 2 y 3 ejes.
+// GetAPI no retorna distancia → el campo KM queda vacío.
 async function calcularPeajes(content, db, cfg, rutas) {
   if (!rutas || rutas.length === 0) {
     showAlert('No hay rutas para calcular con los filtros actuales', 'error');
@@ -731,10 +741,11 @@ async function calcularPeajes(content, db, cfg, rutas) {
   }
   const targets = rutas.filter(r => r.lat != null && r.lon != null);
   const sinCoords = rutas.length - targets.length;
-  const totalConsultas = targets.length * 4;
-  const estMin = Math.max(1, Math.ceil((totalConsultas * 0.5) / 60));
+  const totalConsultas = targets.length * 2; // Ida + Vuelta (1 categoría PESADO para ambos ejes)
+  const estSeg = totalConsultas * 1; // ~1s por consulta
+  const estMin = estSeg < 60 ? `~${estSeg}s` : `~${Math.ceil(estSeg / 60)} min`;
   const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
-  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s): Ida + Vuelta, por separado para 2 y 3 ejes = ${totalConsultas} consultas.\nTiempo estimado: ~${estMin} min.${aviso}\n\nNota: el plan de prueba de TollGuru permite 15 consultas/día.\n¿Continuar?`)) {
+  if (!confirm(`Se calcularán peajes (vía GetAPI Chile) para ${targets.length} ruta(s).\nIda + Vuelta = ${totalConsultas} consultas. Tiempo estimado: ${estMin}.${aviso}\n\nNota: el resultado PESADO se aplica igual a 2 y 3 ejes.\n¿Continuar?`)) {
     return;
   }
 
@@ -761,26 +772,20 @@ async function calcularPeajes(content, db, cfg, rutas) {
     const origenPt = { lat: cd.lat, lng: cd.lon };
     const destinoPt = { lat: ruta.lat, lng: ruta.lon };
 
-    for (const ejes of [2, 3]) {
-      const vehicleType = ejes === 2 ? '2AxlesTruck' : '3AxlesTruck';
-      let ida = null, vuelta = null, errored = false;
-      try {
-        ida = await callRouteTolls(origenPt, destinoPt, vehicleType);
-        await sleep(500);
-        vuelta = await callRouteTolls(destinoPt, origenPt, vehicleType);
-        await sleep(500);
-      } catch (err) {
-        console.error('Error calculando peajes para', ruta.codigo, ejes, 'ejes', err);
-        errored = true;
-        if (/cuota|429|FORBIDDEN/i.test(String(err && err.message))) {
-          cancelado = true;
-          showAlert('Cuota diaria de TollGuru excedida. Avance guardado.', 'error');
-        }
-      }
-
-      pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored });
-      if (cancelado) break;
+    let ida = null, vuelta = null, errored = false;
+    try {
+      ida = await callGetApiTolls(origenPt, destinoPt);
+      await sleep(500);
+      vuelta = await callGetApiTolls(destinoPt, origenPt);
+      await sleep(500);
+    } catch (err) {
+      console.error('Error calculando peajes GetAPI para', ruta.codigo, err);
+      errored = true;
     }
+
+    // GetAPI no retorna distanceMeters → pjUpsertToll dejará km_ida/km_vuelta en null automáticamente.
+    // El mismo peaje PESADO (ida/vuelta) se registra para ejes=2 y ejes=3.
+    [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored }));
 
     if ((i + 1) % 10 === 0) saveDatabase(db);
   }
