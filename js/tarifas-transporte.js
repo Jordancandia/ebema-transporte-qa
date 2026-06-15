@@ -384,9 +384,9 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Invoca la Edge Function 'route-tolls' (proxy seguro hacia Google Routes API)
-async function callRouteTolls(origin, destination) {
-  const { data, error } = await supabase.functions.invoke('route-tolls', { body: { origin, destination } });
+// Invoca la Edge Function 'route-tolls' (proxy seguro hacia TollGuru API)
+async function callRouteTolls(origin, destination, vehicleType) {
+  const { data, error } = await supabase.functions.invoke('route-tolls', { body: { origin, destination, vehicleType } });
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
   return data;
@@ -669,9 +669,10 @@ async function calcularPeajes(content, db, cfg, rutas) {
   }
   const targets = rutas.filter(r => r.lat != null && r.lon != null);
   const sinCoords = rutas.length - targets.length;
-  const estMin = Math.max(1, Math.ceil((targets.length * 2 * 0.5) / 60));
+  const totalConsultas = targets.length * 4;
+  const estMin = Math.max(1, Math.ceil((totalConsultas * 0.5) / 60));
   const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
-  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) (Ida + Vuelta, 2 y 3 ejes).\nTiempo estimado: ~${estMin} min.${aviso}\n¿Continuar?`)) {
+  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s): Ida + Vuelta, por separado para 2 y 3 ejes = ${totalConsultas} consultas.\nTiempo estimado: ~${estMin} min.${aviso}\n\nNota: el plan de prueba de TollGuru permite 15 consultas/día.\n¿Continuar?`)) {
     return;
   }
 
@@ -698,18 +699,26 @@ async function calcularPeajes(content, db, cfg, rutas) {
     const origenPt = { lat: cd.lat, lng: cd.lon };
     const destinoPt = { lat: ruta.lat, lng: ruta.lon };
 
-    let ida = null, vuelta = null, errored = false;
-    try {
-      ida = await callRouteTolls(origenPt, destinoPt);
-      await sleep(500);
-      vuelta = await callRouteTolls(destinoPt, origenPt);
-      await sleep(500);
-    } catch (err) {
-      console.error('Error calculando peajes para', ruta.codigo, err);
-      errored = true;
-    }
+    for (const ejes of [2, 3]) {
+      const vehicleType = ejes === 2 ? '2AxlesTruck' : '3AxlesTruck';
+      let ida = null, vuelta = null, errored = false;
+      try {
+        ida = await callRouteTolls(origenPt, destinoPt, vehicleType);
+        await sleep(500);
+        vuelta = await callRouteTolls(destinoPt, origenPt, vehicleType);
+        await sleep(500);
+      } catch (err) {
+        console.error('Error calculando peajes para', ruta.codigo, ejes, 'ejes', err);
+        errored = true;
+        if (/cuota|429|FORBIDDEN/i.test(String(err && err.message))) {
+          cancelado = true;
+          showAlert('Cuota diaria de TollGuru excedida. Avance guardado.', 'error');
+        }
+      }
 
-    [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored }));
+      pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored });
+      if (cancelado) break;
+    }
 
     if ((i + 1) % 10 === 0) saveDatabase(db);
   }
