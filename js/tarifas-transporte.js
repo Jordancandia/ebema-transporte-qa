@@ -5,6 +5,7 @@ import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg }
 import { CAP_LIST, truckTypesWithCap, calcularMatrizCostos } from './tarifas-engine.js';
 import { formatCLP, parseCSV, showAlert, toCSV, downloadFile, escapeHtml } from './utils.js';
 import { supabase } from './supabase-client.js';
+import { getField } from './zonas-transporte.js';
 
 let activeSub = 'peajes';
 
@@ -12,6 +13,7 @@ let activeSub = 'peajes';
 let pjFiltroTexto = '';
 let pjFiltroComuna = '';
 let pjFiltroCentro = '';
+let pjFiltroClasificacion = '';
 let pjFiltroPendientes = false;
 
 // ---------- Helpers genéricos ----------
@@ -176,6 +178,9 @@ function renderPeajesAuto(content, db, cfg) {
   if (pjFiltroCentro) {
     rows = rows.filter(r => r.ruta.origenId === pjFiltroCentro);
   }
+  if (pjFiltroClasificacion) {
+    rows = rows.filter(r => r.ruta.clasificRuta === pjFiltroClasificacion);
+  }
   if (pjFiltroPendientes) {
     rows = rows.filter(r => !r.toll || !r.toll.calculado_en || r.toll.needs_review);
   }
@@ -244,11 +249,22 @@ function renderPeajesAuto(content, db, cfg) {
           </select>
         </div>
         <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">CLASIFICACIÓN</label>
+          <select id="pj-f-clasif" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-40">
+            <option value="">Todas</option>
+            <option value="Regional" ${pjFiltroClasificacion === 'Regional' ? 'selected' : ''}>Regional</option>
+            <option value="Interregional" ${pjFiltroClasificacion === 'Interregional' ? 'selected' : ''}>Interregional</option>
+          </select>
+        </div>
+        <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary flex items-center gap-xs cursor-pointer">
             <input type="checkbox" id="pj-f-pend" ${pjFiltroPendientes ? 'checked' : ''}> SOLO PENDIENTES / REVISIÓN
           </label>
         </div>
         <div class="flex-1"></div>
+        <button id="pj-carga-comuna" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">upload_file</span> Carga Masiva por Comuna
+        </button>
         <button id="pj-export" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
           <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
         </button>
@@ -332,10 +348,12 @@ function renderPeajesAuto(content, db, cfg) {
   document.getElementById('pj-f-texto').addEventListener('change', (e) => { pjFiltroTexto = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-origen').addEventListener('change', (e) => { pjFiltroCentro = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-clasif').addEventListener('change', (e) => { pjFiltroClasificacion = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTexto = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-export').addEventListener('click', () => exportPeajesCSV(db, rows));
+  document.getElementById('pj-carga-comuna').addEventListener('click', () => abrirModalCargaPeajesComuna(content, db, cfg));
   document.getElementById('pj-calcular').addEventListener('click', () => {
     const rutasUnicas = [...new Set(rows.map(r => r.ruta))];
     calcularPeajes(content, db, cfg, rutasUnicas);
@@ -400,6 +418,216 @@ function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
   row.calculado_en = now;
   row.updated_at = now;
   return row;
+}
+
+// Crea o actualiza la fila route_tolls para (routeId, ejes) con valores
+// fijados manualmente (carga masiva por comuna). Marca como revisado.
+function pjSetTollManual(db, routeId, ejes, peajeIda, peajeVuelta) {
+  db.routeTolls = db.routeTolls || [];
+  let row = db.routeTolls.find(rt => rt.route_id === routeId && Number(rt.ejes) === ejes);
+  if (!row) {
+    row = { id: `tj_${routeId}_${ejes}`, route_id: routeId, ejes, peaje_ida: 0, peaje_vuelta: 0, needs_review: false };
+    db.routeTolls.push(row);
+  }
+  const now = new Date().toISOString();
+  row.peaje_ida = Math.round(peajeIda || 0);
+  row.peaje_vuelta = Math.round(peajeVuelta || 0);
+  row.needs_review = false;
+  row.calculado_en = now;
+  row.updated_at = now;
+  return row;
+}
+
+// Dado un centro de origen y una zona de transporte (comuna), retorna las
+// rutas activas afectadas: las que pertenecen directamente a esa zona, más
+// las rutas de tipo "Sector" que correspondan a la misma comuna (heredan el
+// valor del peaje de la comuna).
+function findRutasParaComuna(db, centroId, zonaId) {
+  const zona = (db.transportZones || []).find(z => z.zona === zonaId);
+  const routes = db.routes || [];
+
+  const directas = routes.filter(r => r.activo && r.origenId === centroId && r.id_zona_transporte === zonaId);
+
+  let sectores = [];
+  if (zona && zona.comuna) {
+    const zonasSector = (db.transportZones || [])
+      .filter(z => z.tipo === 'Sector' && z.comuna === zona.comuna && z.zona !== zonaId)
+      .map(z => z.zona);
+    if (zonasSector.length) {
+      sectores = routes.filter(r => r.activo && r.origenId === centroId && zonasSector.includes(r.id_zona_transporte));
+    }
+  }
+
+  const all = [...directas, ...sectores];
+  const seen = new Set();
+  return all.filter(r => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
+}
+
+// Interpreta una fila del CSV de carga masiva de peajes por comuna.
+function parsePeajesComunaRow(row) {
+  const centroId = (getField(row, 'id_centro_origen', 'centro_origen', 'id_centro', 'centro') || '').toString().trim();
+  const zonaId = (getField(row, 'id_zona_transporte', 'zona_transporte', 'id_zona', 'zona') || '').toString().trim();
+  const ejes = Number((getField(row, 'eje', 'ejes') || '').toString().trim());
+  const peajeIda = Number(getField(row, 'peaje_ida', 'valor_peaje_ida', 'peajeida')) || 0;
+  const peajeVuelta = Number(getField(row, 'peaje_vuelta', 'valor_peaje_vuelta', 'peajevuelta')) || 0;
+  return { centroId, zonaId, ejes, peajeIda, peajeVuelta };
+}
+
+// Genera y descarga una plantilla CSV con una fila por cada combinación
+// (Centro Origen, Zona de Transporte = Comuna) × eje, lista para completar
+// con los valores de peaje y volver a subir.
+function descargarPlantillaPeajesComuna(db) {
+  const headers = ['id_centro_origen', 'centro_origen', 'id_zona_transporte', 'comuna', 'eje', 'peaje_ida', 'peaje_vuelta'];
+  const combos = new Map();
+  (db.routes || []).filter(r => r.activo && r.origenId && r.id_zona_transporte).forEach(r => {
+    const zona = (db.transportZones || []).find(z => z.zona === r.id_zona_transporte);
+    if (zona && zona.tipo === 'Sector') return; // las rutas Sector heredan el valor de su comuna
+    const key = `${r.origenId}__${r.id_zona_transporte}`;
+    if (!combos.has(key)) {
+      combos.set(key, { centroId: r.origenId, zonaId: r.id_zona_transporte, comuna: r.comuna || (zona ? zona.comuna : '') || '' });
+    }
+  });
+  const data = [];
+  combos.forEach(c => {
+    [2, 3].forEach(ejes => {
+      data.push([c.centroId, getCentreName(db, c.centroId) || '', c.zonaId, c.comuna, ejes, 0, 0]);
+    });
+  });
+  downloadFile(`plantilla_peajes_por_comuna_${Date.now()}.csv`, toCSV(headers, data));
+  showAlert('Plantilla de carga masiva de peajes por comuna descargada');
+}
+
+// Modal de Carga Masiva de Peajes por Comuna: permite subir un CSV con
+// id_centro_origen, id_zona_transporte, eje, peaje_ida y peaje_vuelta. El
+// valor se aplica a todas las rutas activas de ese centro+comuna, incluyendo
+// las rutas "Sector" que pertenezcan a la misma comuna.
+function abrirModalCargaPeajesComuna(content, db, cfg) {
+  const el = document.createElement('div');
+  el.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md';
+  el.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl p-lg w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center gap-sm mb-md">
+        <span class="material-symbols-outlined text-primary">upload_file</span>
+        <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface">Carga Masiva de Peajes por Comuna</h3>
+      </div>
+      <p class="text-[12px] text-secondary mb-sm">
+        Suba un CSV con el valor de peaje por <b>Centro de Origen + Zona de Transporte (comuna)</b> y tipo de eje.
+        El valor se aplicará a todas las rutas activas de ese centro y comuna, incluyendo las rutas de tipo
+        <b>Sector</b> que pertenezcan a la misma comuna.
+      </p>
+      <p class="text-[12px] text-secondary mb-md">
+        Columnas requeridas: <code>id_centro_origen</code>, <code>id_zona_transporte</code>, <code>eje</code> (2 o 3),
+        <code>peaje_ida</code>, <code>peaje_vuelta</code>.
+      </p>
+      <div class="flex flex-wrap gap-sm mb-md">
+        <button id="pjc-plantilla" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">download</span> Descargar Plantilla
+        </button>
+        <label class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase cursor-pointer">
+          <span class="material-symbols-outlined text-[18px]">attach_file</span> Elegir Archivo CSV
+          <input id="pjc-file" type="file" accept=".csv" class="hidden">
+        </label>
+      </div>
+      <div id="pjc-preview"></div>
+      <div class="flex justify-end gap-sm mt-md">
+        <button id="pjc-cancel" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded text-[12px] uppercase">Cerrar</button>
+        <button id="pjc-importar" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded text-[12px] uppercase opacity-50 cursor-not-allowed" disabled>Importar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+
+  let parsedRows = [];
+
+  el.querySelector('#pjc-cancel').addEventListener('click', () => el.remove());
+  el.querySelector('#pjc-plantilla').addEventListener('click', () => descargarPlantillaPeajesComuna(db));
+
+  function renderPreview() {
+    const validRows = parsedRows.filter(r => !r.error);
+    const totalRutas = validRows.reduce((acc, r) => acc + r.rutas.length, 0);
+    el.querySelector('#pjc-preview').innerHTML = `
+      <div class="border border-outline-variant rounded overflow-hidden overflow-x-auto max-h-64">
+        <table class="w-full text-[12px] zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left">
+              <th class="p-sm">Centro</th>
+              <th class="p-sm">Zona / Comuna</th>
+              <th class="p-sm text-center">Eje</th>
+              <th class="p-sm text-right">Peaje Ida</th>
+              <th class="p-sm text-right">Peaje Vuelta</th>
+              <th class="p-sm text-center">Rutas Afectadas</th>
+              <th class="p-sm">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${parsedRows.map(r => `<tr class="${r.error ? 'bg-red-50' : ''}">
+              <td class="p-sm">${escapeHtml(r.centroNombre)}</td>
+              <td class="p-sm">${escapeHtml(r.zonaNombre)} <span class="text-secondary">(${escapeHtml(r.zonaId)})</span></td>
+              <td class="p-sm text-center">${r.ejes || '—'}</td>
+              <td class="p-sm text-right">${formatCLP(r.peajeIda)}</td>
+              <td class="p-sm text-right">${formatCLP(r.peajeVuelta)}</td>
+              <td class="p-sm text-center">${r.error ? '—' : r.rutas.length}</td>
+              <td class="p-sm">${r.error ? `<span class="text-red-700">${escapeHtml(r.error)}</span>` : '<span class="text-green-700">OK</span>'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-[11px] text-secondary mt-sm">${validRows.length} de ${parsedRows.length} fila(s) válida(s) · ${totalRutas} registro(s) (ruta × eje) serán actualizados.</p>
+    `;
+    const btn = el.querySelector('#pjc-importar');
+    if (validRows.length > 0) {
+      btn.disabled = false;
+      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    } else {
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+  }
+
+  el.querySelector('#pjc-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const buffer = ev.target.result;
+      let text = new TextDecoder('utf-8').decode(buffer);
+      if (text.includes('�')) text = new TextDecoder('windows-1252').decode(buffer);
+      const csvRows = parseCSV(text);
+      parsedRows = csvRows.map(row => {
+        const { centroId, zonaId, ejes, peajeIda, peajeVuelta } = parsePeajesComunaRow(row);
+        const centro = (db.logisticsCentres || []).find(c => c.id === centroId);
+        const zona = (db.transportZones || []).find(z => z.zona === zonaId);
+        let error = '';
+        if (!centroId || !centro) error = 'Centro origen no encontrado';
+        else if (!zonaId || !zona) error = 'Zona de transporte no encontrada';
+        else if (ejes !== 2 && ejes !== 3) error = 'Eje inválido (debe ser 2 o 3)';
+        const rutas = !error ? findRutasParaComuna(db, centroId, zonaId) : [];
+        if (!error && rutas.length === 0) error = 'Sin rutas activas para este centro y comuna';
+        return {
+          centroId, zonaId, ejes, peajeIda, peajeVuelta, rutas, error,
+          centroNombre: centro ? centro.nombre : (centroId || '—'),
+          zonaNombre: zona ? (zona.comuna || zona.denominacion || zonaId) : (zonaId || '—')
+        };
+      });
+      renderPreview();
+    };
+    reader.readAsArrayBuffer(file);
+  });
+
+  el.querySelector('#pjc-importar').addEventListener('click', () => {
+    const validRows = parsedRows.filter(r => !r.error);
+    if (validRows.length === 0) return;
+    let totalRutas = 0;
+    validRows.forEach(r => {
+      r.rutas.forEach(ruta => {
+        pjSetTollManual(db, ruta.id, r.ejes, r.peajeIda, r.peajeVuelta);
+        totalRutas++;
+      });
+    });
+    saveDatabase(db);
+    el.remove();
+    showAlert(`Carga masiva de peajes por comuna aplicada: ${totalRutas} registro(s) actualizado(s) en ${validRows.length} fila(s).`);
+    renderPeajesAuto(content, db, cfg);
+  });
 }
 
 // Modal de progreso para el cálculo masivo de peajes
