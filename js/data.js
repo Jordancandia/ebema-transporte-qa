@@ -36,7 +36,7 @@ export function calcEjes(capacidad) {
 // Tarifas de transporte por centro (truck_types): 4 tipos de camión base,
 // duplicados para cada centro logístico (Id_centro). Kmbase/baseKM definen
 // el tramo y costo base referencial; baseRate/ratePerKm son la tarifa vigente.
-const TRUCK_BASE_TYPES = [
+export const TRUCK_BASE_TYPES = [
   { type: 'Camión 5 Ton',  capacityTons: 'Hasta 5 Tons',  baseRate: 45000,  ratePerKm: 1200 },
   { type: 'Camión 10 Ton', capacityTons: 'Hasta 10 Tons', baseRate: 60000,  ratePerKm: 1500 },
   { type: 'Camión 15 Ton', capacityTons: 'Hasta 15 Tons', baseRate: 75000,  ratePerKm: 1800 },
@@ -45,7 +45,7 @@ const TRUCK_BASE_TYPES = [
 
 // Genera las filas de truck_types (una por centro x tipo de camión) a partir
 // de una lista de centros logísticos y una lista base de tipos de camión.
-function buildTruckTypes(centres, baseTypes = TRUCK_BASE_TYPES) {
+export function buildTruckTypes(centres, baseTypes = TRUCK_BASE_TYPES) {
   const out = [];
   (centres || []).forEach(cd => {
     baseTypes.forEach(b => {

@@ -1,7 +1,7 @@
 // PANTALLA 1: Administrador de Tarifas Transporte — SIT EBEMA
 // Sub-módulos: Peajes, Combustibles y Rendimientos, Seguros y Permisos,
 // Variables Generales y Motor Actuarial (ZCAP) con exportación CSV.
-import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg, getOrigenGroups, getGroupRepId } from './data.js';
+import { getDatabase, saveDatabase, getCentreName, getTariffConfig, truckCapKg, getOrigenGroups, getGroupRepId, buildTruckTypes, TRUCK_BASE_TYPES } from './data.js';
 import { CAP_LIST, truckTypesWithCap, calcularMatrizCostos } from './tarifas-engine.js';
 import { formatCLP, parseCSV, showAlert, toCSV, downloadFile, escapeHtml } from './utils.js';
 import { supabase } from './supabase-client.js';
@@ -15,6 +15,10 @@ let pjFiltroComuna = '';
 let pjFiltroCentro = '';
 let pjFiltroClasificacion = '';
 let pjFiltroPendientes = false;
+
+// Estado de filtros de la vista "Motor ZCAP — Resultados"
+let zcapFiltroCentro = ''; // origen_grupo (Centro Origen); '' = todos
+let zcapFiltroClasif = ''; // 'Regional' | 'Interregional'; '' = todas
 
 // ---------- Helpers genéricos ----------
 function setPath(obj, path, value) {
@@ -902,8 +906,45 @@ function truckNumInput(id, field, value) {
   return `<input type="number" step="any" class="${inputCls}" data-truck-id="${id}" data-truck-field="${field}" value="${value ?? 0}">`;
 }
 
+// Recalcula Tarifa/KM (costo/km final del Motor ZCAP + margen de ganancia,
+// promedio de rutas activas del Centro Origen para esa capacidad) y Tarifa
+// Base (Tarifa/KM x Km Base) para cada tipo de camión, persistiendo en
+// db.truckTypes si hubo cambios. Si se indica grupoFiltro (origen_grupo),
+// solo recalcula ese Centro Origen; en caso contrario recalcula todos.
+// Devuelve un Set con los ids de tipos de camión que sí tienen rutas activas
+// (y por tanto valor ZCAP vigente).
+function syncTarifasZcap(db, cfg, grupoFiltro = '') {
+  const groups = getOrigenGroups(db).filter(g => !grupoFiltro || g.grupo === grupoFiltro);
+  const matriz = calcularMatrizCostos(db, cfg);
+  const margenPct = Number(cfg.variables.margenGanancia) || 0;
+  const conZcap = new Set();
+  let cambios = false;
+
+  groups.forEach(g => {
+    const rows = (db.truckTypes || []).filter(t => t.Id_centro === g.repId);
+    rows.forEach(t => {
+      const items = matriz.filter(m => g.centroIds.includes(m.centroId) && m.capKg === truckCapKg(t.type));
+      if (items.length === 0) return;
+      conZcap.add(t.id);
+      const avgCostoKmFinal = items.reduce((s, m) => s + m.item11_costoKmFinal, 0) / items.length;
+      const ratePerKm = Math.round(avgCostoKmFinal * (1 + margenPct / 100));
+      const kmBase = Number(t.Kmbase) || 0;
+      const baseRate = Math.round(ratePerKm * kmBase);
+      if (t.ratePerKm !== ratePerKm || t.baseRate !== baseRate) {
+        t.ratePerKm = ratePerKm;
+        t.baseRate = baseRate;
+        cambios = true;
+      }
+    });
+  });
+
+  if (cambios) saveDatabase(db);
+  return conZcap;
+}
+
 function renderTarifasCamion(content, db, cfg) {
   const groups = getOrigenGroups(db);
+  const conZcap = syncTarifasZcap(db, cfg);
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm">
@@ -911,7 +952,7 @@ function renderTarifasCamion(content, db, cfg) {
         <span class="material-symbols-outlined text-primary">local_shipping</span>
         <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Tarifas de Transporte por Centro y Tipo de Camión</h2>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Tarifa Base y Tarifa/KM alimentan el Cotizador de Tarifas (servicio Exclusivo y Consolidado). Km Base y Costo Base son el tramo de referencia usado para fijar dichas tarifas. Use "Aplicar Motor ZCAP" para recalcular Tarifa Base y Tarifa/KM desde el costeo actuarial (promedio de rutas activas del centro, con margen de ganancia).</p>
+      <p class="text-[12px] text-secondary mb-md">Tarifa/KM se calcula automáticamente desde el Motor ZCAP (costo/km final promedio de las rutas activas del centro, con margen de ganancia) y es de solo lectura. Tarifa Base = Tarifa/KM × Km Base, también calculada. Km Base y Costo Base son editables y definen el tramo de referencia.</p>
 
       ${groups.map(g => {
         const rows = (db.truckTypes || []).filter(t => t.Id_centro === g.repId);
@@ -922,9 +963,10 @@ function renderTarifasCamion(content, db, cfg) {
         <div class="mb-lg">
           <div class="flex items-center justify-between mb-xs">
             <h3 class="font-body-lg text-body-lg font-bold text-on-surface">${g.nombre} <span class="text-secondary font-data-mono text-[12px]">(${g.centroIds.join(', ')})</span>${integrantes}</h3>
-            <button class="tt-apply-zcap bg-primary hover:bg-[#930007] text-white font-bold px-md py-xs rounded flex items-center gap-xs text-[11px] uppercase" data-grupo="${g.grupo}">
-              <span class="material-symbols-outlined text-[16px]">calculate</span> Aplicar Motor ZCAP
-            </button>
+            ${rows.length === 0 ? `
+            <button class="tt-add-types bg-primary hover:bg-[#930007] text-white font-bold px-md py-xs rounded flex items-center gap-xs text-[11px] uppercase" data-grupo="${g.grupo}">
+              <span class="material-symbols-outlined text-[16px]">add</span> Agregar tipo de camión
+            </button>` : ''}
           </div>
           <div class="bg-surface border border-outline-variant overflow-hidden rounded">
             <table class="w-full zebra-table border-collapse">
@@ -939,15 +981,15 @@ function renderTarifasCamion(content, db, cfg) {
                 </tr>
               </thead>
               <tbody class="font-body-md text-body-md">
-                ${rows.length === 0 ? `<tr><td colspan="6" class="p-md text-center text-secondary">Sin tarifas configuradas para este centro.</td></tr>` :
+                ${rows.length === 0 ? `<tr><td colspan="6" class="p-md text-center text-secondary">Sin tipos de camión configurados para este centro. Use "Agregar tipo de camión" para crear los 4 tipos estándar (5/10/15/28 Ton).</td></tr>` :
                   rows.map(t => `
                   <tr class="border-b border-outline-variant">
                     <td class="p-md font-bold">${t.type}</td>
                     <td class="p-md">${t.capacityTons}</td>
                     <td class="p-md w-28">${truckNumInput(t.id, 'Kmbase', t.Kmbase)}</td>
                     <td class="p-md w-32">${truckNumInput(t.id, 'baseKM', t.baseKM)}</td>
-                    <td class="p-md w-32">${truckNumInput(t.id, 'baseRate', t.baseRate)}</td>
-                    <td class="p-md w-28">${truckNumInput(t.id, 'ratePerKm', t.ratePerKm)}</td>
+                    <td class="p-md w-32 text-right font-data-mono">${formatCLP(t.baseRate)}</td>
+                    <td class="p-md w-28 text-right font-data-mono">${formatCLP(t.ratePerKm)}${conZcap.has(t.id) ? '' : `<div class="text-[11px] text-secondary normal-case">Sin rutas activas</div>`}</td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -965,40 +1007,21 @@ function renderTarifasCamion(content, db, cfg) {
       const row = (db.truckTypes || []).find(t => t.id === id);
       if (row) row[field] = val;
       saveDatabase(db);
+      if (field === 'Kmbase') renderTarifasCamion(content, db, cfg);
     });
   });
 
-  // ---------- Aplicar Motor ZCAP: recalcula Tarifa Base y Tarifa/KM ----------
-  // desde el costeo actuarial (promedio de rutas activas del centro por tipo de
-  // camión, costo/km final con margen de ganancia). Km Base define el tramo de
-  // referencia usado para derivar la Tarifa Base (Costo Base = Tarifa Base).
-  content.querySelectorAll('.tt-apply-zcap').forEach(btn => {
+  content.querySelectorAll('.tt-add-types').forEach(btn => {
     btn.addEventListener('click', () => {
       const grupo = getOrigenGroups(db).find(g => g.grupo === btn.dataset.grupo);
       if (!grupo) return;
-      const matriz = calcularMatrizCostos(db, cfg).filter(m => grupo.centroIds.includes(m.centroId));
-      const rows = (db.truckTypes || []).filter(t => t.Id_centro === grupo.repId);
-      const margenPct = Number(cfg.variables.margenGanancia) || 0;
-
-      let actualizados = 0;
-      rows.forEach(t => {
-        const items = matriz.filter(m => m.capKg === truckCapKg(t.type));
-        if (items.length === 0) return;
-        const avgCostoKmFinal = items.reduce((s, m) => s + m.item11_costoKmFinal, 0) / items.length;
-        const ratePerKmConMargen = avgCostoKmFinal * (1 + margenPct / 100);
-        const kmBase = Number(t.Kmbase) || 0;
-        t.ratePerKm = Math.round(ratePerKmConMargen);
-        t.baseRate = Math.round(ratePerKmConMargen * kmBase);
-        t.baseKM = t.baseRate;
-        actualizados++;
-      });
-
-      if (actualizados === 0) {
-        showAlert('No hay rutas activas para este centro; no se pudo calcular el Motor ZCAP.', 'error');
-        return;
-      }
+      const centro = (db.logisticsCentres || []).find(c => c.id === grupo.repId);
+      if (!centro) return;
+      const nuevos = buildTruckTypes([centro], TRUCK_BASE_TYPES);
+      db.truckTypes = db.truckTypes || [];
+      db.truckTypes.push(...nuevos);
       saveDatabase(db);
-      showAlert(`Tarifas actualizadas desde el Motor ZCAP para ${actualizados} tipo(s) de camión`);
+      showAlert(`${nuevos.length} tipo(s) de camión agregados para ${grupo.nombre}`);
       renderTarifasCamion(content, db, cfg);
     });
   });
@@ -1375,7 +1398,12 @@ function renderVariables(content, db, cfg) {
 // MOTOR ACTUARIAL: RESULTADOS Y EXPORTACIÓN
 // ============================================================
 function renderResultados(content, db, cfg) {
-  const matriz = calcularMatrizCostos(db, cfg);
+  const groups = getOrigenGroups(db);
+  let matriz = calcularMatrizCostos(db, cfg);
+  if (zcapFiltroCentro) matriz = matriz.filter(m => m.ruta.origen_grupo === zcapFiltroCentro);
+  if (zcapFiltroClasif) matriz = matriz.filter(m => m.ruta.clasificRuta === zcapFiltroClasif);
+
+  const grupoSel = groups.find(g => g.grupo === zcapFiltroCentro);
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
@@ -1384,11 +1412,34 @@ function renderResultados(content, db, cfg) {
           <span class="material-symbols-outlined text-primary">calculate</span>
           <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Motor Actuarial — Resultados ZCAP</h2>
         </div>
-        <button id="zcap-export" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-sm text-xs uppercase">
-          <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
-        </button>
+        <div class="flex items-center gap-sm">
+          <button id="zcap-actualizar" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-sm text-xs uppercase">
+            <span class="material-symbols-outlined text-[18px]">refresh</span> Actualizar Tarifas (Motor ZCAP)
+          </button>
+          <button id="zcap-export" class="bg-surface border border-outline-variant hover:bg-surface-container-high text-on-surface font-bold px-md py-sm rounded flex items-center gap-sm text-xs uppercase">
+            <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
+          </button>
+        </div>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Calculado para todas las rutas activas y los 4 tipos de camión, según las variables configuradas en los sub-módulos anteriores.</p>
+      <p class="text-[12px] text-secondary mb-md">Calculado para las rutas activas y los tipos de camión según los filtros aplicados, con las variables configuradas en los sub-módulos anteriores. "Actualizar Tarifas" recalcula y guarda Tarifa/KM y Tarifa Base (Tarifa por Camión) para el Centro Origen filtrado, o para todos si no hay filtro.</p>
+
+      <div class="flex flex-wrap items-end gap-md mb-md">
+        <div>
+          <label class="font-label-caps text-label-caps text-secondary block">CENTRO ORIGEN</label>
+          <select id="zcap-f-centro" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-56">
+            <option value="">Todos</option>
+            ${groups.map(g => `<option value="${g.grupo}" ${zcapFiltroCentro === g.grupo ? 'selected' : ''}>${g.nombre}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="font-label-caps text-label-caps text-secondary block">CLASIFICACIÓN</label>
+          <select id="zcap-f-clasif" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-40">
+            <option value="">Todas</option>
+            <option value="Regional" ${zcapFiltroClasif === 'Regional' ? 'selected' : ''}>Regional</option>
+            <option value="Interregional" ${zcapFiltroClasif === 'Interregional' ? 'selected' : ''}>Interregional</option>
+          </select>
+        </div>
+      </div>
 
       <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
         <table class="w-full zebra-table border-collapse">
@@ -1396,6 +1447,7 @@ function renderResultados(content, db, cfg) {
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Clasificación</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Camión</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Ejes</th>
@@ -1407,10 +1459,12 @@ function renderResultados(content, db, cfg) {
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${matriz.map(m => `
+            ${matriz.length === 0 ? `<tr><td colspan="11" class="p-md text-center text-secondary">Sin resultados para los filtros seleccionados.</td></tr>` :
+              matriz.map(m => `
               <tr class="border-b border-outline-variant">
                 <td class="p-md">${getCentreName(db, m.centroId)}</td>
                 <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
+                <td class="p-md">${m.ruta.clasificRuta || ''}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
                 <td class="p-md">${m.truckType.type}</td>
                 <td class="p-md text-center font-data-mono text-data-mono">${m.ejes}</td>
@@ -1426,14 +1480,33 @@ function renderResultados(content, db, cfg) {
     </div>
   `;
 
+  document.getElementById('zcap-f-centro').addEventListener('change', (e) => {
+    zcapFiltroCentro = e.target.value;
+    renderResultados(content, db, cfg);
+  });
+  document.getElementById('zcap-f-clasif').addEventListener('change', (e) => {
+    zcapFiltroClasif = e.target.value;
+    renderResultados(content, db, cfg);
+  });
+
+  document.getElementById('zcap-actualizar').addEventListener('click', () => {
+    const conZcap = syncTarifasZcap(db, cfg, zcapFiltroCentro);
+    const msg = grupoSel
+      ? `Tarifas actualizadas desde el Motor ZCAP para ${grupoSel.nombre} (${conZcap.size} tipo(s) de camión)`
+      : `Tarifas actualizadas desde el Motor ZCAP para ${conZcap.size} tipo(s) de camión en todos los Centros Origen`;
+    showAlert(msg);
+    renderResultados(content, db, cfg);
+  });
+
   document.getElementById('zcap-export').addEventListener('click', () => {
-    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
+    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Clasificacion', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
     const rows = matriz.map(m => {
       const cd = db.logisticsCentres.find(c => c.id === m.centroId);
       return [
         cd ? cd.id : m.centroId,
         m.ruta.codigo,
         m.ruta.destino,
+        m.ruta.clasificRuta || '',
         m.truckType.capKg,
         m.ejes,
         Math.round(m.item11_costoKmFinal)
