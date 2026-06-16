@@ -308,6 +308,9 @@ function renderPeajesAuto(content, db, cfg) {
         <button id="pj-export" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
           <span class="material-symbols-outlined text-[18px]">download</span> Exportar CSV
         </button>
+        <button id="pj-calcular-km" class="bg-secondary hover:bg-[#4a5568] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">straighten</span> Calcular KM
+        </button>
         <button id="pj-calcular" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
           <span class="material-symbols-outlined text-[18px]">calculate</span> Calcular Peajes
         </button>
@@ -402,7 +405,19 @@ function renderPeajesAuto(content, db, cfg) {
     content.querySelectorAll('.pj-row-check').forEach(cb => { cb.checked = e.target.checked; });
   });
 
-  // Calcular: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
+  // Calcular KM: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
+  document.getElementById('pj-calcular-km').addEventListener('click', () => {
+    const checked = [...content.querySelectorAll('.pj-row-check:checked')].map(cb => cb.dataset.routeId);
+    let rutasTarget;
+    if (checked.length > 0) {
+      rutasTarget = [...new Set(checked)].map(id => routes.find(r => r.id === id)).filter(Boolean);
+    } else {
+      rutasTarget = [...new Set(rows.map(r => r.ruta))];
+    }
+    calcularKm(content, db, cfg, rutasTarget);
+  });
+
+  // Calcular Peajes: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
   document.getElementById('pj-calcular').addEventListener('click', () => {
     const checked = [...content.querySelectorAll('.pj-row-check:checked')].map(cb => cb.dataset.routeId);
     let rutasTarget;
@@ -480,6 +495,15 @@ async function callGetApiTolls(originCity, destCity, category) {
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
   return data; // { tollCLP, hasToll, tollsCount, details, notFound? }
+}
+
+async function callGoogleDistance(originLat, originLng, destLat, destLng) {
+  const { data, error } = await supabase.functions.invoke('google-distance', {
+    body: { originLat, originLng, destLat, destLng }
+  });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data; // { distanceKm, durationMin, distanceText, durationText }
 }
 
 // Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
@@ -833,6 +857,84 @@ async function calcularPeajes(content, db, cfg, rutas) {
   saveDatabase(db);
   modal.close();
   showAlert(cancelado ? 'Cálculo de peajes cancelado (avance guardado)' : 'Cálculo de peajes finalizado');
+  renderPeajesAuto(content, db, cfg);
+}
+
+// ---------- Calcular KM vía Google Distance Matrix ----------
+async function calcularKm(content, db, cfg, rutas) {
+  if (!rutas || rutas.length === 0) {
+    showAlert('No hay rutas para calcular KM', 'error');
+    return;
+  }
+
+  // Cache: omitir rutas que ya tienen km_ida en alguna fila de routeTolls
+  const sinKm = rutas.filter(r => {
+    const tollRow = (db.routeTolls || []).find(t => t.route_id === r.id && t.km_ida != null);
+    return !tollRow;
+  });
+
+  const targets = sinKm.filter(r => r.lat != null && r.lon != null);
+  const sinCoords = sinKm.length - targets.length;
+  const yaConKm = rutas.length - sinKm.length;
+
+  if (targets.length === 0) {
+    const msg = yaConKm === rutas.length
+      ? 'Todas las rutas seleccionadas ya tienen KM calculado (cache).'
+      : `No hay rutas con coordenadas para calcular KM.`;
+    showAlert(msg, 'info');
+    return;
+  }
+
+  const avisoCache = yaConKm > 0 ? `\n${yaConKm} ruta(s) ya tienen KM y serán omitidas (cache).` : '';
+  const avisoCoords = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas serán omitidas.` : '';
+  if (!confirm(`Se calcularán KMs (vía Google Distance Matrix) para ${targets.length} ruta(s).${avisoCache}${avisoCoords}\n\n¿Continuar?`)) return;
+
+  const modal = createProgressModal(targets.length);
+  let cancelado = false;
+  modal.cancelBtn.addEventListener('click', () => { cancelado = true; });
+
+  db.routeTolls = db.routeTolls || [];
+
+  for (let i = 0; i < targets.length; i++) {
+    if (cancelado) break;
+    const ruta = targets[i];
+    const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
+    modal.update(i, targets.length, `${ruta.codigo} — ${ruta.destino || ''}`);
+
+    if (!cd || cd.lat == null || cd.lon == null) {
+      console.warn('Centro sin coordenadas para KM:', cd?.id, cd?.nombre);
+      continue;
+    }
+
+    try {
+      const ida = await callGoogleDistance(cd.lat, cd.lon, ruta.lat, ruta.lon);
+      await sleep(300);
+      const vuelta = await callGoogleDistance(ruta.lat, ruta.lon, cd.lat, cd.lon);
+      await sleep(300);
+
+      // Guardar km_ida / km_vuelta en todas las filas de ejes para esta ruta
+      [2, 3].forEach(ejes => {
+        let row = db.routeTolls.find(rt => rt.route_id === ruta.id && Number(rt.ejes) === ejes);
+        if (!row) {
+          row = { id: `tj_${ruta.id}_${ejes}`, route_id: ruta.id, ejes, peaje_ida: 0, peaje_vuelta: 0, needs_review: false };
+          db.routeTolls.push(row);
+        }
+        row.km_ida = ida ? ida.distanceKm : null;
+        row.km_vuelta = vuelta ? vuelta.distanceKm : null;
+        row.updated_at = new Date().toISOString();
+      });
+
+    } catch (err) {
+      console.error('Error calculando KM para', ruta.codigo, err);
+    }
+
+    if ((i + 1) % 10 === 0) saveDatabase(db);
+  }
+
+  modal.update(targets.length, targets.length, cancelado ? 'Cancelado' : 'Finalizado');
+  saveDatabase(db);
+  modal.close();
+  showAlert(cancelado ? 'Cálculo de KM cancelado (avance guardado)' : 'Cálculo de KM finalizado');
   renderPeajesAuto(content, db, cfg);
 }
 
@@ -1590,75 +1692,4 @@ function renderResultados(content, db, cfg) {
       <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
         <table class="w-full zebra-table border-collapse">
           <thead>
-            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Clasificación</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Camión</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Ejes</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peajes</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Combustible</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Ruta Total</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo/KM Final</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right bg-primary/5">ZCAP</th>
-            </tr>
-          </thead>
-          <tbody class="font-body-md text-body-md">
-            ${matriz.length === 0 ? `<tr><td colspan="11" class="p-md text-center text-secondary">Sin resultados para los filtros seleccionados.</td></tr>` :
-              matriz.map(m => `
-              <tr class="border-b border-outline-variant">
-                <td class="p-md">${getCentreName(db, m.centroId)}</td>
-                <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
-                <td class="p-md">${m.ruta.clasificRuta || ''}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
-                <td class="p-md">${m.truckType.type}</td>
-                <td class="p-md text-center font-data-mono text-data-mono">${m.ejes}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item11_costoKmFinal)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono font-bold bg-primary/5">${formatCLP(m.zcap)}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('zcap-f-centro').addEventListener('change', (e) => {
-    zcapFiltroCentro = e.target.value;
-    renderResultados(content, db, cfg);
-  });
-  document.getElementById('zcap-f-clasif').addEventListener('change', (e) => {
-    zcapFiltroClasif = e.target.value;
-    renderResultados(content, db, cfg);
-  });
-
-  document.getElementById('zcap-actualizar').addEventListener('click', () => {
-    const conZcap = syncTarifasZcap(db, cfg, zcapFiltroCentro);
-    const msg = grupoSel
-      ? `Tarifas actualizadas desde el Motor ZCAP para ${grupoSel.nombre} (${conZcap.size} tipo(s) de camión)`
-      : `Tarifas actualizadas desde el Motor ZCAP para ${conZcap.size} tipo(s) de camión en todos los Centros Origen`;
-    showAlert(msg);
-    renderResultados(content, db, cfg);
-  });
-
-  document.getElementById('zcap-export').addEventListener('click', () => {
-    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Clasificacion', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
-    const rows = matriz.map(m => {
-      const cd = db.logisticsCentres.find(c => c.id === m.centroId);
-      return [
-        cd ? cd.id : m.centroId,
-        m.ruta.codigo,
-        m.ruta.destino,
-        m.ruta.clasificRuta || '',
-        m.truckType.capKg,
-        m.ejes,
-        Math.round(m.item11_costoKmFinal)
-      ];
-    });
-    downloadFile(`zcap_transporte_${Date.now()}.csv`, toCSV(headers, rows));
-    showAlert('Archivo CSV de costos de transporte exportado');
-  });
-}
+            <t
