@@ -867,7 +867,6 @@ async function calcularKm(content, db, cfg, rutas) {
     return;
   }
 
-  // Cache: omitir rutas que ya tienen km_ida en alguna fila de routeTolls
   const sinKm = rutas.filter(r => {
     const tollRow = (db.routeTolls || []).find(t => t.route_id === r.id && t.km_ida != null);
     return !tollRow;
@@ -912,7 +911,6 @@ async function calcularKm(content, db, cfg, rutas) {
       const vuelta = await callGoogleDistance(ruta.lat, ruta.lon, cd.lat, cd.lon);
       await sleep(300);
 
-      // Guardar km_ida / km_vuelta en todas las filas de ejes para esta ruta
       [2, 3].forEach(ejes => {
         let row = db.routeTolls.find(rt => rt.route_id === ruta.id && Number(rt.ejes) === ejes);
         if (!row) {
@@ -1690,4 +1688,77 @@ function renderResultados(content, db, cfg) {
       </div>
 
       <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
-        <table class="w-full zebra-table border-coll
+        <table class="w-full zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Clasificación</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Camión</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Ejes</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peajes</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Combustible</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Ruta Total</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo/KM Final</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right bg-primary/5">ZCAP</th>
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            ${matriz.length === 0 ? `<tr><td colspan="11" class="p-md text-center text-secondary">Sin resultados para los filtros seleccionados.</td></tr>` :
+              matriz.map(m => `
+              <tr class="border-b border-outline-variant">
+                <td class="p-md">${getCentreName(db, m.centroId)}</td>
+                <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
+                <td class="p-md">${m.ruta.clasificRuta || ''}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
+                <td class="p-md">${m.truckType.type}</td>
+                <td class="p-md text-center font-data-mono text-data-mono">${m.ejes}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item11_costoKmFinal)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono font-bold bg-primary/5">${formatCLP(m.zcap)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('zcap-f-centro').addEventListener('change', (e) => {
+    zcapFiltroCentro = e.target.value;
+    renderResultados(content, db, cfg);
+  });
+  document.getElementById('zcap-f-clasif').addEventListener('change', (e) => {
+    zcapFiltroClasif = e.target.value;
+    renderResultados(content, db, cfg);
+  });
+
+  document.getElementById('zcap-actualizar').addEventListener('click', () => {
+    const conZcap = syncTarifasZcap(db, cfg, zcapFiltroCentro);
+    const msg = grupoSel
+      ? `Tarifas actualizadas desde el Motor ZCAP para ${grupoSel.nombre} (${conZcap.size} tipo(s) de camión)`
+      : `Tarifas actualizadas desde el Motor ZCAP para ${conZcap.size} tipo(s) de camión en todos los Centros Origen`;
+    showAlert(msg);
+    renderResultados(content, db, cfg);
+  });
+
+  document.getElementById('zcap-export').addEventListener('click', () => {
+    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Clasificacion', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
+    const rows = matriz.map(m => {
+      const cd = db.logisticsCentres.find(c => c.id === m.centroId);
+      return [
+        cd ? cd.id : m.centroId,
+        m.ruta.codigo,
+        m.ruta.destino,
+        m.ruta.clasificRuta || '',
+        m.truckType.capKg,
+        m.ejes,
+        Math.round(m.item11_costoKmFinal)
+      ];
+    });
+    downloadFile(`zcap_transporte_${Date.now()}.csv`, toCSV(headers, rows));
+    showAlert('Archivo CSV de costos de transporte exportado');
+  });
+}
