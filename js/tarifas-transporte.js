@@ -1226,17 +1226,33 @@ function renderTarifasCamion(content, db, cfg) {
 // ============================================================
 // SUB-MÓDULO 2: COMBUSTIBLES Y RENDIMIENTOS
 // ============================================================
+const CNE_FUNCTION_URL = 'https://deetqblpfobwqioyfkiu.supabase.co/functions/v1/cne-diesel-price';
+
 function renderCombustibles(content, db, cfg) {
   const groups = getOrigenGroups(db);
   const hoy = new Date();
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
-      <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
-        <span class="material-symbols-outlined text-primary">local_gas_station</span>
-        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Precio de Combustible por Centro Logístico</h2>
+      <div class="flex items-center justify-between mb-md border-b border-outline-variant pb-sm flex-wrap gap-sm">
+        <div class="flex items-center gap-sm">
+          <span class="material-symbols-outlined text-primary">local_gas_station</span>
+          <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Precio de Combustible por Centro Logístico</h2>
+        </div>
+        <button id="cne-update-btn"
+          class="flex items-center gap-xs bg-primary text-white px-md py-sm rounded text-[12px] font-bold uppercase hover:opacity-90 transition-opacity">
+          <span class="material-symbols-outlined text-[16px]">cloud_download</span>
+          Actualizar desde CNE
+        </button>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Alerta crítica si un centro pasa más de 3 semanas sin confirmar/actualizar su precio.</p>
+
+      <div id="cne-status" class="hidden mb-md text-[12px] px-md py-sm rounded border"></div>
+
+      <p class="text-[12px] text-secondary mb-md">
+        Alerta crítica si un centro pasa más de 3 semanas sin confirmar/actualizar su precio.
+        El botón <b>Actualizar desde CNE</b> obtiene el precio del Petróleo Diésel de la semana
+        más reciente publicada por la Comisión Nacional de Energía, por región.
+      </p>
       <div class="bg-surface border border-outline-variant overflow-hidden rounded">
         <table class="w-full zebra-table border-collapse">
           <thead>
@@ -1245,9 +1261,10 @@ function renderCombustibles(content, db, cfg) {
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Precio Litro (CLP)</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Última Actualización</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Estado</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Fuente CNE</th>
             </tr>
           </thead>
-          <tbody class="font-body-md text-body-md">
+          <tbody class="font-body-md text-body-md" id="combustibles-tbody">
             ${groups.map(g => {
               const fuel = cfg.combustibles[g.repId] || {};
               let estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN DATOS</span>`;
@@ -1260,11 +1277,15 @@ function renderCombustibles(content, db, cfg) {
               const integrantes = g.centros.length > 1
                 ? `<br><span class="text-secondary text-[11px]">${g.centros.map(c => c.nombre).join(', ')}</span>`
                 : '';
-              return `<tr class="border-b border-outline-variant">
+              const cneInfo = fuel.cneRegion
+                ? `<span class="text-[10px] text-secondary">${fuel.cneRegion}<br>${fuel.cneMes || ''}/${fuel.cneAnio || ''}</span>`
+                : `<span class="text-[10px] text-outline-variant">—</span>`;
+              return `<tr class="border-b border-outline-variant" data-grupo="${escapeHtml(g.grupo)}">
                 <td class="p-md font-bold">${g.nombre}${integrantes}</td>
                 <td class="p-md w-40">${numInput(`combustibles.${g.repId}.precioLitro`, fuel.precioLitro)}</td>
                 <td class="p-md w-44">${dateInput(`combustibles.${g.repId}.fecha`, fuel.fecha)}</td>
                 <td class="p-md text-center">${estado}</td>
+                <td class="p-md text-center">${cneInfo}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1302,6 +1323,57 @@ function renderCombustibles(content, db, cfg) {
       </div>
     </div>
   `;
+
+  // ── Botón "Actualizar desde CNE" ──────────────────────────────
+  document.getElementById('cne-update-btn')?.addEventListener('click', async () => {
+    const btn    = document.getElementById('cne-update-btn');
+    const status = document.getElementById('cne-status');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined text-[16px] animate-spin">sync</span> Consultando CNE…';
+    status.className = 'mb-md text-[12px] px-md py-sm rounded border bg-blue-50 border-blue-200 text-blue-800';
+    status.textContent = 'Conectando con API CNE…';
+    status.classList.remove('hidden');
+
+    try {
+      const res  = await fetch(CNE_FUNCTION_URL);
+      const json = await res.json();
+
+      if (!json.success) {
+        throw new Error(json.error || 'Error desconocido en Edge Function');
+      }
+
+      const precios = json.data; // { SANTIAGO: { precio, mes, anio, region, fecha }, … }
+      let actualizados = 0;
+
+      groups.forEach(g => {
+        const grupoKey = String(g.grupo).toUpperCase();
+        const entry    = precios[grupoKey];
+        if (!entry) return;
+        if (!cfg.combustibles[g.repId]) cfg.combustibles[g.repId] = {};
+        cfg.combustibles[g.repId].precioLitro = entry.precio;
+        cfg.combustibles[g.repId].fecha       = entry.fecha;
+        cfg.combustibles[g.repId].cneRegion   = entry.region;
+        cfg.combustibles[g.repId].cneMes      = entry.mes;
+        cfg.combustibles[g.repId].cneAnio     = entry.anio;
+        actualizados++;
+      });
+
+      saveDatabase(db);
+
+      status.className = 'mb-md text-[12px] px-md py-sm rounded border bg-green-50 border-green-200 text-green-800';
+      status.textContent = `✓ ${actualizados} centros actualizados con precio CNE Diésel — datos de la última semana disponible.`;
+
+      // Re-render la vista completa para reflejar nuevos precios
+      renderCombustibles(content, db, cfg);
+
+    } catch (err) {
+      status.className = 'mb-md text-[12px] px-md py-sm rounded border bg-red-50 border-red-200 text-red-800';
+      status.textContent = `Error: ${err.message}`;
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined text-[16px]">cloud_download</span> Actualizar desde CNE';
+    }
+  });
 }
 
 // ============================================================
