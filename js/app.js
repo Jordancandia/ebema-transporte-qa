@@ -86,12 +86,20 @@ async function checkSession() {
       u = {
         email,
         name: googleName || email.split('@')[0].toUpperCase(),
-        role: 'operador',
+        role: 'AGENTE_COMERCIAL', // rol canónico inicial (no privilegiado); un OWNER puede cambiarlo después
         activo: true,
         lastAccess: new Date().toLocaleDateString('es-CL')
       };
       db.users.push(u);
-      saveDatabase(db);
+      // Upsert directo: no usar saveDatabase() aquí porque sincroniza TODOS los usuarios,
+      // lo que genera errores RLS al intentar modificar filas de otros usuarios.
+      // La policy app_users_insert permite auto-registro de la propia fila @ebema.cl.
+      const { error: regErr } = await supabase.from('app_users').upsert(u);
+      if (regErr) console.warn('No se pudo registrar perfil en Supabase:', regErr.message);
+    } else {
+      // Actualizar lastAccess en cada inicio de sesión
+      u.lastAccess = new Date().toLocaleDateString('es-CL');
+      await supabase.from('app_users').update({ lastAccess: u.lastAccess }).eq('email', email);
     }
 
     // Cuenta inhabilitada por el administrador
@@ -1019,27 +1027,4 @@ function switchTab(tabName) {
   switch (tabName) {
     case 'rates':
       pageTitle.textContent = 'Cotizador de Tarifas';
-      renderRatesView(stage);
-      break;
-    case 'transports':
-      pageTitle.textContent = 'Gestión de Transportes';
-      renderTransportsView(stage);
-      break;
-    case 'routes':
-      pageTitle.textContent = 'Rutas de Transporte';
-      renderRoutesView(stage);
-      break;
-    case 'roles':
-      pageTitle.textContent = 'Roles y Perfiles';
-      renderRolesView(stage);
-      break;
-    case 'tarifas-transporte':
-      pageTitle.textContent = 'Administrador de Tarifas Transporte';
-      renderTariffTransportView(stage);
-      break;
-    case 'tarifas-clientes':
-      pageTitle.textContent = 'Administrador de Tarifas Clientes';
-      renderClientTariffView(stage);
-      break;
-  }
-}
+ 
