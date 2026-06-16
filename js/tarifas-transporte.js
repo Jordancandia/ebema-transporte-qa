@@ -526,8 +526,8 @@ function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
   row.peaje_vuelta = vuelta ? Math.round(vuelta.tollCLP || 0) : 0;
   row.km_ida = ida && ida.distanceMeters != null ? Math.round(ida.distanceMeters / 100) / 10 : null;
   row.km_vuelta = vuelta && vuelta.distanceMeters != null ? Math.round(vuelta.distanceMeters / 100) / 10 : null;
-  const idaReview = !ida || (ida.hasToll && !ida.tollCLP);
-  const vueltaReview = !vuelta || (vuelta.hasToll && !vuelta.tollCLP);
+  const idaReview = !ida || (ida.hasToll && !ida.tollCLP) || !!ida.notFound;
+  const vueltaReview = !vuelta || (vuelta.hasToll && !vuelta.tollCLP) || !!vuelta.notFound;
   row.needs_review = !!(idaReview || vueltaReview);
   row.calculado_en = now;
   row.updated_at = now;
@@ -1690,6 +1690,4 @@ function renderResultados(content, db, cfg) {
       </div>
 
       <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
-        <table class="w-full zebra-table border-collapse">
-          <thead>
-            <t
+        <table class="w-full zebra-table border-coll
