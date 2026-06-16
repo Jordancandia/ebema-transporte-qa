@@ -1027,27 +1027,4 @@ function switchTab(tabName) {
   switch (tabName) {
     case 'rates':
       pageTitle.textContent = 'Cotizador de Tarifas';
-      renderRatesView(stage);
-      break;
-    case 'transports':
-      pageTitle.textContent = 'Gestión de Transportes';
-      renderTransportsView(stage);
-      break;
-    case 'routes':
-      pageTitle.textContent = 'Rutas de Transporte';
-      renderRoutesView(stage);
-      break;
-    case 'roles':
-      pageTitle.textContent = 'Roles y Perfiles';
-      renderRolesView(stage);
-      break;
-    case 'tarifas-transporte':
-      pageTitle.textContent = 'Administrador de Tarifas Transporte';
-      renderTariffTransportView(stage);
-      break;
-    case 'tarifas-clientes':
-      pageTitle.textContent = 'Administrador de Tarifas Clientes';
-      renderClientTariffView(stage);
-      break;
-  }
-}
+ 
