@@ -353,8 +353,18 @@ function renderPeajesAuto(content, db, cfg) {
                   <td class="p-md">${escapeHtml(origenNombre)}</td>
                   <td class="p-md">${escapeHtml(ruta.destino || '')}</td>
                   <td class="p-md">${EJES_LABELS[ejes]}</td>
-                  <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_ida', toll ? toll.peaje_ida : 0)}</td>
-                  <td class="p-md w-32">${tollNumInput(ruta.id, ejes, 'peaje_vuelta', toll ? toll.peaje_vuelta : 0)}</td>
+                  <td class="p-md w-32">
+                    ${tollNumInput(ruta.id, ejes, 'peaje_ida', toll ? toll.peaje_ida : 0)}
+                    ${toll && (toll.mainline_ida || toll.ramp_ida || toll.electronic_ida) ? `<div class="text-[10px] text-secondary mt-1 leading-tight">
+                      ${toll.mainline_ida   ? `<span title="Troncal">T:${formatCLP(toll.mainline_ida)}</span> ` : ''}${toll.ramp_ida ? `<span title="Lateral">L:${formatCLP(toll.ramp_ida)}</span> ` : ''}${toll.electronic_ida ? `<span title="TAG">E:${formatCLP(toll.electronic_ida)}</span>` : ''}
+                    </div>` : ''}
+                  </td>
+                  <td class="p-md w-32">
+                    ${tollNumInput(ruta.id, ejes, 'peaje_vuelta', toll ? toll.peaje_vuelta : 0)}
+                    ${toll && (toll.mainline_vuelta || toll.ramp_vuelta || toll.electronic_vuelta) ? `<div class="text-[10px] text-secondary mt-1 leading-tight">
+                      ${toll.mainline_vuelta   ? `<span title="Troncal">T:${formatCLP(toll.mainline_vuelta)}</span> ` : ''}${toll.ramp_vuelta ? `<span title="Lateral">L:${formatCLP(toll.ramp_vuelta)}</span> ` : ''}${toll.electronic_vuelta ? `<span title="TAG">E:${formatCLP(toll.electronic_vuelta)}</span>` : ''}
+                    </div>` : ''}
+                  </td>
                   <td class="p-md text-right font-data-mono text-data-mono">${kmTotal}</td>
                   <td class="p-md text-center">${estado}</td>
                   <td class="p-md text-center">
@@ -436,23 +446,28 @@ function renderPeajesAuto(content, db, cfg) {
     });
   });
 }
+// Mapeo ejes → tipos de camión individuales para el CSV de exportación.
+// Un camión de 2 ejes (CAMION_2_EJES) cubre capacidades 5T y 10T.
+// Un camión de 3 ejes (CAMION_PESADO) cubre capacidades 15T y 28T.
+const EJES_TO_TIPOS = {
+  2: ['5T', '10T'],
+  3: ['15T', '28T']
+};
+
 function exportPeajesCSV(db, rows) {
-  const grupos = getOrigenGroups(db);
-  const headers = ['RUTA', 'ORIGEN', 'DESTINO', 'TIPO_DE_CAMION', 'PEAJE_IDA', 'PEAJE_VUELTA', 'KM'];
-  const data = rows.map(({ ruta, ejes, toll }) => {
-    const grupo = grupos.find(g => g.centroIds.includes(ruta.origenId));
+  const grupos  = getOrigenGroups(db);
+  const headers = ['RUTA', 'ORIGEN', 'DESTINO', 'TIPO_CAMION', 'PEAJE_IDA', 'PEAJE_VUELTA'];
+  const data = [];
+  for (const { ruta, ejes, toll } of rows) {
+    const grupo  = grupos.find(g => g.centroIds.includes(ruta.origenId));
     const origen = grupo ? grupo.nombre : (getCentreName(db, ruta.origenId) || '');
-    const km = toll && toll.km_ida != null ? (toll.km_ida * 2).toFixed(1) : '';
-    return [
-      ruta.codigo,
-      origen,
-      ruta.destino || '',
-      EJES_LABELS[ejes],
-      toll ? Math.round(toll.peaje_ida || 0) : 0,
-      toll ? Math.round(toll.peaje_vuelta || 0) : 0,
-      km
-    ];
-  });
+    const ida    = toll ? Math.round(toll.peaje_ida    || 0) : 0;
+    const vuelta = toll ? Math.round(toll.peaje_vuelta || 0) : 0;
+    // Expandir a una fila por cada tipo de camión individual
+    for (const tipo of (EJES_TO_TIPOS[ejes] || [EJES_LABELS[ejes]])) {
+      data.push([ruta.codigo, origen, ruta.destino || '', tipo, ida, vuelta]);
+    }
+  }
   downloadFile(`peajes_rutas_${Date.now()}.csv`, toCSV(headers, data));
   showAlert('Archivo CSV de peajes exportado');
 }
@@ -508,6 +523,7 @@ async function callGoogleDistance(originLat, originLng, destLat, destLng) {
 
 // Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
 // de ida/vuelta. Si opts.error, marca la fila para revisión sin tocar valores.
+// Guarda además el desglose por tipo: mainline (Troncal), ramp (Lateral), electronic (TAG).
 function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
   db.routeTolls = db.routeTolls || [];
   let row = db.routeTolls.find(rt => rt.route_id === routeId && Number(rt.ejes) === ejes);
@@ -522,17 +538,26 @@ function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
     row.updated_at = now;
     return row;
   }
-  row.peaje_ida = ida ? Math.round(ida.tollCLP || 0) : 0;
+  row.peaje_ida    = ida    ? Math.round(ida.tollCLP    || 0) : 0;
   row.peaje_vuelta = vuelta ? Math.round(vuelta.tollCLP || 0) : 0;
-  row.km_ida = ida && ida.distanceMeters != null ? Math.round(ida.distanceMeters / 100) / 10 : null;
+  row.km_ida    = ida    && ida.distanceMeters    != null ? Math.round(ida.distanceMeters    / 100) / 10 : null;
   row.km_vuelta = vuelta && vuelta.distanceMeters != null ? Math.round(vuelta.distanceMeters / 100) / 10 : null;
+
+  // Desglose por tipo de peaje (v5 Edge Function)
+  row.mainline_ida    = ida    ? Math.round(ida.mainlineCLP    || 0) : 0;
+  row.ramp_ida        = ida    ? Math.round(ida.rampCLP        || 0) : 0;
+  row.electronic_ida  = ida    ? Math.round(ida.electronicCLP  || 0) : 0;
+  row.mainline_vuelta    = vuelta ? Math.round(vuelta.mainlineCLP    || 0) : 0;
+  row.ramp_vuelta        = vuelta ? Math.round(vuelta.rampCLP        || 0) : 0;
+  row.electronic_vuelta  = vuelta ? Math.round(vuelta.electronicCLP  || 0) : 0;
+
   // notFound = ruta sin peaje confirmada por GetAPI → $0 correcto, no necesita revisión
-  // needs_review solo si: sin resultado, o tiene peaje pero sin valor
-  const idaReview = !ida || (ida.hasToll && !ida.tollCLP);
+  // needs_review si: API retornó 0 Y hasToll=true (precio inesperadamente vacío)
+  const idaReview    = !ida    || (ida.hasToll    && !ida.tollCLP);
   const vueltaReview = !vuelta || (vuelta.hasToll && !vuelta.tollCLP);
   row.needs_review = !!(idaReview || vueltaReview);
   row.calculado_en = now;
-  row.updated_at = now;
+  row.updated_at   = now;
   return row;
 }
 
@@ -1828,7 +1853,6 @@ function renderResultados(content, db, cfg) {
                 <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
                 <td class="p-md">${m.ruta.clasificRuta || ''}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
-                <td class="p-md">${m.truckType.type}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
