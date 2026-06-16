@@ -446,24 +446,40 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Mapeo Centro Logístico EBEMA → nombre de ciudad en GetAPI (/locations)
+// GetAPI soporta 31 ciudades fijas en sus rutas de peaje.
+const CENTRO_GETAPI_CITY = {
+  1001: 'Santiago (Vespucio Norte)',
+  1002: 'Santiago (Vespucio Norte)',
+  1003: 'Santiago (Vespucio Norte)',
+  1005: 'Santiago (Río Maipo)',
+  1020: 'Antofagasta (La Negra)',
+  1040: 'Coquimbo',
+  1050: 'Quillota',
+  1060: 'Rancagua',
+  1070: 'Talca',
+  1080: 'Concepción (vía Itata)',
+  1081: 'Concepción (vía Itata)',
+  1082: 'Concepción (vía Itata)',
+  1090: 'Temuco',
+  1100: 'Puerto Montt',
+  1160: 'Chillán',
+};
+
 // Invoca la Edge Function 'getapi-tolls' (proxy seguro hacia chile.getapi.cl)
-// Homologación EBEMA:
-//   ejes=2 (5t / 10t) → CAMION_2_EJES
-//   ejes=3 (15t / 28t) → CAMION_PESADO
-// No retorna km (GetAPI no entrega distancia).
-async function callGetApiTolls(origin, destination, category) {
+// Usa /route-cost con nombres de ciudad (el plan actual no incluye /route-cost-by-coords).
+// Homologación:
+//   ejes=2 (5t/10t) → CAMION_2_EJES
+//   ejes=3 (15t/28t) → CAMION_PESADO
+// Si la ciudad de destino no está en la lista de 31 ciudades GetAPI,
+// retorna { tollCLP: 0, hasToll: false, notFound: true } — sin error, sin peaje.
+async function callGetApiTolls(originCity, destCity, category) {
   const { data, error } = await supabase.functions.invoke('getapi-tolls', {
-    body: {
-      originLat: origin.lat,
-      originLng: origin.lng,
-      destLat: destination.lat,
-      destLng: destination.lng,
-      category: category // 'CAMION_2_EJES' | 'CAMION_PESADO'
-    }
+    body: { originCity, destCity, category }
   });
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
-  return data; // { tollCLP, hasToll, tollsCount, details, category }
+  return data; // { tollCLP, hasToll, tollsCount, details, notFound? }
 }
 
 // Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
@@ -777,23 +793,35 @@ async function calcularPeajes(content, db, cfg, rutas) {
       continue;
     }
 
-    const origenPt = { lat: cd.lat, lng: cd.lon };
-    const destinoPt = { lat: ruta.lat, lng: ruta.lon };
+    // Resolver ciudad de origen (Centro Logístico → nombre GetAPI)
+    const originCity = CENTRO_GETAPI_CITY[String(cd.id)] || CENTRO_GETAPI_CITY[Number(cd.id)];
+    if (!originCity) {
+      console.warn('Centro sin mapeo GetAPI:', cd.id, cd.nombre);
+      [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
+      continue;
+    }
+    // Destino: usar ruta.destino directamente (GetAPI acepta nombres de ciudades chilenas)
+    const destCity = ruta.destino;
 
     for (const ejes of [2, 3]) {
       const category = ejesToCategory[ejes];
       let ida = null, vuelta = null, errored = false;
       try {
-        ida = await callGetApiTolls(origenPt, destinoPt, category);
+        ida = await callGetApiTolls(originCity, destCity, category);
         await sleep(500);
-        vuelta = await callGetApiTolls(destinoPt, origenPt, category);
-        await sleep(500);
+        // Si destino no está en GetAPI (notFound), vuelta también queda en $0
+        if (!ida || ida.notFound) {
+          vuelta = ida; // mismo resultado: $0, no hay peaje en esa ruta
+        } else {
+          vuelta = await callGetApiTolls(destCity, originCity, category);
+          await sleep(500);
+        }
       } catch (err) {
         console.error('Error calculando peajes GetAPI para', ruta.codigo, ejes, 'ejes', err);
         errored = true;
       }
 
-      // GetAPI no retorna distanceMeters → pjUpsertToll dejará km_ida/km_vuelta en null.
+      // GetAPI no retorna distanceMeters → km_ida/km_vuelta quedan null.
       pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored });
       if (cancelado) break;
     }
