@@ -48,8 +48,8 @@ const inputCls = 'w-full border border-[#CED4DA] p-xs font-data-mono text-data-m
 function numInput(path, value, extra = '') {
   return `<input type="number" step="any" class="${inputCls}" data-path="${path}" value="${value ?? 0}" ${extra}>`;
 }
-function dateInput(path, value) {
-  return `<input type="date" class="${inputCls} text-left" data-path="${path}" value="${value || ''}">`;
+function dateInput(path, value, extra = '') {
+  return `<input type="date" class="${inputCls} text-left" data-path="${path}" value="${value || ''}" ${extra}>`;
 }
 function textInput(path, value, extra = '') {
   return `<input type="text" class="${inputCls} text-left" data-path="${path}" value="${value || ''}" ${extra}>`;
@@ -1228,6 +1228,27 @@ function renderTarifasCamion(content, db, cfg) {
 // ============================================================
 const CNE_FUNCTION_URL = 'https://deetqblpfobwqioyfkiu.supabase.co/functions/v1/cne-diesel-price';
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function fuenteBadge(fuel) {
+  if (!fuel || !fuel.precioLitro) {
+    return `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN DATOS</span>`;
+  }
+  if (fuel.fuente === 'cne') {
+    const ref = fuel.cneRegion
+      ? `<br><span class="font-normal text-[10px] opacity-75">${fuel.cneRegion} ${fuel.cneMes || ''}/${fuel.cneAnio || ''}</span>`
+      : '';
+    return `<span class="inline-flex flex-col items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-label-caps text-[10px] leading-tight">
+      <span class="flex items-center gap-xs"><span class="material-symbols-outlined text-[12px]">cloud_done</span> API CNE</span>${ref}
+    </span>`;
+  }
+  return `<span class="inline-flex items-center gap-xs px-2 py-1 rounded bg-surface-container text-secondary font-label-caps text-[10px]">
+    <span class="material-symbols-outlined text-[12px]">edit</span> Manual
+  </span>`;
+}
+
 function renderCombustibles(content, db, cfg) {
   const groups = getOrigenGroups(db);
   const hoy = new Date();
@@ -1249,9 +1270,9 @@ function renderCombustibles(content, db, cfg) {
       <div id="cne-status" class="hidden mb-md text-[12px] px-md py-sm rounded border"></div>
 
       <p class="text-[12px] text-secondary mb-md">
-        Alerta crítica si un centro pasa más de 3 semanas sin confirmar/actualizar su precio.
-        El botón <b>Actualizar desde CNE</b> obtiene el precio del Petróleo Diésel de la semana
-        más reciente publicada por la Comisión Nacional de Energía, por región.
+        Alerta crítica si un centro pasa más de 3 semanas sin actualizar su precio.
+        <b>Actualizar desde CNE</b> obtiene el precio del Petróleo Diésel de la última semana publicada por la CNE.
+        Editar manualmente un precio lo marca como <i>Manual</i> y resetea la fecha a hoy.
       </p>
       <div class="bg-surface border border-outline-variant overflow-hidden rounded">
         <table class="w-full zebra-table border-collapse">
@@ -1261,7 +1282,7 @@ function renderCombustibles(content, db, cfg) {
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Precio Litro (CLP)</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Última Actualización</th>
               <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Estado</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Fuente CNE</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Fuente</th>
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md" id="combustibles-tbody">
@@ -1271,21 +1292,18 @@ function renderCombustibles(content, db, cfg) {
               if (fuel.fecha) {
                 const dias = Math.floor((hoy - new Date(fuel.fecha)) / 86400000);
                 estado = dias > 21
-                  ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]"><span class="material-symbols-outlined text-[14px]">warning</span> ${dias} DÍAS SIN ACTUALIZAR</span>`
+                  ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]"><span class="material-symbols-outlined text-[14px]">warning</span> ${dias}D SIN ACTUALIZAR</span>`
                   : `<span class="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 font-label-caps text-[10px]">VIGENTE (${dias}D)</span>`;
               }
               const integrantes = g.centros.length > 1
                 ? `<br><span class="text-secondary text-[11px]">${g.centros.map(c => c.nombre).join(', ')}</span>`
                 : '';
-              const cneInfo = fuel.cneRegion
-                ? `<span class="text-[10px] text-secondary">${fuel.cneRegion}<br>${fuel.cneMes || ''}/${fuel.cneAnio || ''}</span>`
-                : `<span class="text-[10px] text-outline-variant">—</span>`;
-              return `<tr class="border-b border-outline-variant" data-grupo="${escapeHtml(g.grupo)}">
+              return `<tr class="border-b border-outline-variant" data-repid="${g.repId}">
                 <td class="p-md font-bold">${g.nombre}${integrantes}</td>
-                <td class="p-md w-40">${numInput(`combustibles.${g.repId}.precioLitro`, fuel.precioLitro)}</td>
-                <td class="p-md w-44">${dateInput(`combustibles.${g.repId}.fecha`, fuel.fecha)}</td>
+                <td class="p-md w-40">${numInput(`combustibles.${g.repId}.precioLitro`, fuel.precioLitro, 'data-combustible-repid="' + g.repId + '" data-combustible-field="precio"')}</td>
+                <td class="p-md w-44">${dateInput(`combustibles.${g.repId}.fecha`, fuel.fecha, `data-combustible-repid="${g.repId}" data-combustible-field="fecha"`)}</td>
                 <td class="p-md text-center">${estado}</td>
-                <td class="p-md text-center">${cneInfo}</td>
+                <td class="p-md text-center">${fuenteBadge(fuel)}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1324,6 +1342,31 @@ function renderCombustibles(content, db, cfg) {
     </div>
   `;
 
+  // ── Listener: edición manual de precio o fecha → fuente=Manual, fecha=hoy si es precio
+  content.querySelectorAll('[data-combustible-repid]').forEach(input => {
+    input.addEventListener('change', () => {
+      const repId = input.dataset.combustibleRepid;
+      const field = input.dataset.combustibleField;
+      if (!repId || !cfg.combustibles[repId]) return;
+      cfg.combustibles[repId].fuente = 'manual';
+      // Si cambió el precio, resetear fecha a hoy
+      if (field === 'precio') {
+        const hoyStr = todayISO();
+        cfg.combustibles[repId].fecha = hoyStr;
+        // Actualizar el date input visualmente
+        const fechaInput = content.querySelector(`[data-path="combustibles.${repId}.fecha"]`);
+        if (fechaInput) fechaInput.value = hoyStr;
+      }
+      // Limpiar metadata CNE al editar manualmente
+      delete cfg.combustibles[repId].cneRegion;
+      delete cfg.combustibles[repId].cneMes;
+      delete cfg.combustibles[repId].cneAnio;
+      saveDatabase(db);
+      // Re-render para actualizar badge Fuente y estado días
+      renderCombustibles(content, db, cfg);
+    });
+  });
+
   // ── Botón "Actualizar desde CNE" ──────────────────────────────
   document.getElementById('cne-update-btn')?.addEventListener('click', async () => {
     const btn    = document.getElementById('cne-update-btn');
@@ -1339,11 +1382,10 @@ function renderCombustibles(content, db, cfg) {
       const res  = await fetch(CNE_FUNCTION_URL);
       const json = await res.json();
 
-      if (!json.success) {
-        throw new Error(json.error || 'Error desconocido en Edge Function');
-      }
+      if (!json.success) throw new Error(json.error || 'Error desconocido en Edge Function');
 
-      const precios = json.data; // { SANTIAGO: { precio, mes, anio, region, fecha }, … }
+      const precios  = json.data;
+      const hoyStr   = todayISO(); // fecha de la consulta = hoy (no la fecha de publicación CNE)
       let actualizados = 0;
 
       groups.forEach(g => {
@@ -1352,7 +1394,8 @@ function renderCombustibles(content, db, cfg) {
         if (!entry) return;
         if (!cfg.combustibles[g.repId]) cfg.combustibles[g.repId] = {};
         cfg.combustibles[g.repId].precioLitro = entry.precio;
-        cfg.combustibles[g.repId].fecha       = entry.fecha;
+        cfg.combustibles[g.repId].fecha       = hoyStr;      // ← hoy, no la fecha CNE
+        cfg.combustibles[g.repId].fuente      = 'cne';
         cfg.combustibles[g.repId].cneRegion   = entry.region;
         cfg.combustibles[g.repId].cneMes      = entry.mes;
         cfg.combustibles[g.repId].cneAnio     = entry.anio;
@@ -1362,9 +1405,8 @@ function renderCombustibles(content, db, cfg) {
       saveDatabase(db);
 
       status.className = 'mb-md text-[12px] px-md py-sm rounded border bg-green-50 border-green-200 text-green-800';
-      status.textContent = `✓ ${actualizados} centros actualizados con precio CNE Diésel — datos de la última semana disponible.`;
+      status.textContent = `✓ ${actualizados} centros actualizados — precio CNE Diésel más reciente. Fecha de actualización: ${hoyStr}.`;
 
-      // Re-render la vista completa para reflejar nuevos precios
       renderCombustibles(content, db, cfg);
 
     } catch (err) {
@@ -1787,7 +1829,6 @@ function renderResultados(content, db, cfg) {
                 <td class="p-md">${m.ruta.clasificRuta || ''}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
                 <td class="p-md">${m.truckType.type}</td>
-                <td class="p-md text-center font-data-mono text-data-mono">${m.ejes}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
