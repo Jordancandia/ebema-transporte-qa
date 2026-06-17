@@ -516,20 +516,17 @@ function construirParametrosRuta(origenObj, destinoObj) {
   };
 }
 
-// Invoca la Edge Function 'getapi-tolls' (proxy seguro hacia chile.getapi.cl)
-// Usa /route-cost con nombres de ciudad (el plan actual no incluye /route-cost-by-coords).
-// Homologación:
-//   ejes=2 (5t/10t) → CAMION_2_EJES
-//   ejes=3 (15t/28t) → CAMION_PESADO
-// Si la ciudad de destino no está en la lista de 31 ciudades GetAPI,
-// retorna { tollCLP: 0, hasToll: false, notFound: true } — sin error, sin peaje.
-async function callGetApiTolls(originCity, destCity, category) {
-  const { data, error } = await supabase.functions.invoke('getapi-tolls', {
-    body: { originCity, destCity, category }
+// Invoca la Edge Function 'tollguru-tolls' (proxy hacia TollGuru API).
+// Una sola llamada retorna costos para 2 Y 3 ejes simultáneamente + distancia.
+// Respuesta: { total_2_ejes, total_3_ejes, distance_km, hasTolls, plazas, currency, source }
+// Si la ruta no tiene peajes: hasTolls=false, total_*=0 (sin error, sin revisión).
+async function callTollGuruTolls(originCity, destCity) {
+  const { data, error } = await supabase.functions.invoke('tollguru-tolls', {
+    body: { origin: originCity, destination: destCity }
   });
   if (error) throw error;
   if (data && data.error) throw new Error(data.error);
-  return data; // { tollCLP, hasToll, tollsCount, details, notFound? }
+  return data; // { total_2_ejes, total_3_ejes, distance_km, hasTolls, plazas, currency }
 }
 
 async function callGoogleDistance(originLat, originLng, destLat, destLng) {
@@ -558,33 +555,34 @@ function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
     row.updated_at = now;
     return row;
   }
+  // Soporta formato TollGuru ({ tollCLP }) y formato legacy GetAPI ({ tollCLP })
   row.peaje_ida    = ida    ? Math.round(ida.tollCLP    || 0) : 0;
   row.peaje_vuelta = vuelta ? Math.round(vuelta.tollCLP || 0) : 0;
-  row.km_ida    = ida    && ida.distanceMeters    != null ? Math.round(ida.distanceMeters    / 100) / 10 : null;
-  row.km_vuelta = vuelta && vuelta.distanceMeters != null ? Math.round(vuelta.distanceMeters / 100) / 10 : null;
+  // KM: TollGuru retorna distanceMeters directo; también acepta distance_km * 1000
+  const idaM   = ida    ? (ida.distanceMeters    ?? (ida.distance_km    != null ? ida.distance_km    * 1000 : null)) : null;
+  const vueltaM = vuelta ? (vuelta.distanceMeters ?? (vuelta.distance_km != null ? vuelta.distance_km * 1000 : null)) : null;
+  row.km_ida    = idaM    != null ? Math.round(idaM    / 100) / 10 : null;
+  row.km_vuelta = vueltaM != null ? Math.round(vueltaM / 100) / 10 : null;
 
-  // Desglose por tipo de peaje (v5 Edge Function)
-  row.mainline_ida    = ida    ? Math.round(ida.mainlineCLP    || 0) : 0;
-  row.ramp_ida        = ida    ? Math.round(ida.rampCLP        || 0) : 0;
-  row.electronic_ida  = ida    ? Math.round(ida.electronicCLP  || 0) : 0;
+  // Desglose por tipo de peaje (TollGuru no desglosa por tipo — se deja en 0)
+  row.mainline_ida       = ida    ? Math.round(ida.mainlineCLP    || 0) : 0;
+  row.ramp_ida           = ida    ? Math.round(ida.rampCLP        || 0) : 0;
+  row.electronic_ida     = ida    ? Math.round(ida.electronicCLP  || 0) : 0;
   row.mainline_vuelta    = vuelta ? Math.round(vuelta.mainlineCLP    || 0) : 0;
   row.ramp_vuelta        = vuelta ? Math.round(vuelta.rampCLP        || 0) : 0;
   row.electronic_vuelta  = vuelta ? Math.round(vuelta.electronicCLP  || 0) : 0;
 
   // needs_review si:
   //   - Sin resultado de API (error de red)
-  //   - notFound: ciudad no encontrada en GetAPI → no podemos confirmar si hay peaje → revisión manual
+  //   - notFound: ciudad no encontrada (solo aplica a GetAPI legacy)
   //   - hasToll=true pero tollCLP=0 → dato inconsistente
-  // notFound=false Y hasToll=false → ruta confirmada sin peaje → $0 correcto, no revisa
-  const idaReview    = !ida    || !!ida.notFound    || (ida.hasToll    && !ida.tollCLP);
-  const vueltaReview = !vuelta || !!vuelta.notFound || (vuelta.hasToll && !vuelta.tollCLP);
+  // TollGuru: hasToll=false + toll=0 → ruta sin peaje → $0 correcto, NO revisión
+  const idaHasToll   = ida    ? (ida.hasToll    ?? ida.hasTolls    ?? false) : false;
+  const vueltaHasToll = vuelta ? (vuelta.hasToll ?? vuelta.hasTolls ?? false) : false;
+  const idaReview    = !ida    || !!ida.notFound    || (idaHasToll    && !row.peaje_ida);
+  const vueltaReview = !vuelta || !!vuelta.notFound || (vueltaHasToll && !row.peaje_vuelta);
   row.needs_review = !!(idaReview || vueltaReview);
-  // Guardar motivo de revisión para mostrar en tabla
-  if ((ida && ida.notFound) || (vuelta && vuelta.notFound)) {
-    row.notFound = true;
-  } else {
-    row.notFound = false;
-  }
+  row.not_found = !!((ida && ida.notFound) || (vuelta && vuelta.notFound));
   row.calculado_en = now;
   row.updated_at   = now;
   return row;
@@ -829,12 +827,9 @@ function createProgressModal(total) {
   };
 }
 
-// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas usando GetAPI Chile.
-// Homologación:
-//   2 ejes (5t / 10t) → CAMION_2_EJES
-//   3 ejes (15t / 28t) → CAMION_PESADO
-// Se hacen 4 consultas por ruta (2 categorías × Ida + Vuelta).
-// GetAPI no retorna distancia → el campo KM queda vacío.
+// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas usando TollGuru.
+// Una sola llamada por dirección (ida / vuelta) retorna costos para 2 Y 3 ejes + distancia KM.
+// Se hacen 2 consultas por ruta (Ida + Vuelta); cada respuesta alimenta ambas filas de ejes.
 async function calcularPeajes(content, db, cfg, rutas) {
   if (!rutas || rutas.length === 0) {
     showAlert('No hay rutas para calcular con los filtros actuales', 'error');
@@ -842,11 +837,11 @@ async function calcularPeajes(content, db, cfg, rutas) {
   }
   const targets = rutas.filter(r => r.lat != null && r.lon != null);
   const sinCoords = rutas.length - targets.length;
-  const totalConsultas = targets.length * 4; // 2 categorías (2 ejes + 3 ejes) × Ida + Vuelta
-  const estSeg = totalConsultas * 1; // ~1s por consulta
+  const totalConsultas = targets.length * 2; // Ida + Vuelta (cada llamada retorna 2 y 3 ejes)
+  const estSeg = totalConsultas * 3; // ~3s por consulta TollGuru (2 llamadas internas paralelas)
   const estMin = estSeg < 60 ? `~${estSeg}s` : `~${Math.ceil(estSeg / 60)} min`;
   const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
-  if (!confirm(`Se calcularán peajes (vía GetAPI Chile) para ${targets.length} ruta(s).\nIda + Vuelta × 2 ejes y 3 ejes = ${totalConsultas} consultas. Tiempo estimado: ${estMin}.${aviso}\n\nHomologación: 2 ejes → CAMION_2_EJES · 3 ejes → CAMION_PESADO\n¿Continuar?`)) {
+  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s).\nIda + Vuelta = ${totalConsultas} consultas · cada una retorna 2 y 3 ejes. Tiempo estimado: ${estMin}.${aviso}\n¿Continuar?`)) {
     return;
   }
 
@@ -859,57 +854,54 @@ async function calcularPeajes(content, db, cfg, rutas) {
   let cancelado = false;
   modal.cancelBtn.addEventListener('click', () => { cancelado = true; });
 
-  // Mapa ejes → categoría GetAPI
-  const ejesToCategory = { 2: 'CAMION_2_EJES', 3: 'CAMION_PESADO' };
-
   for (let i = 0; i < targets.length; i++) {
     if (cancelado) break;
     const ruta = targets[i];
     const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
     modal.update(i, targets.length, `${ruta.codigo} — ${ruta.comuna || ruta.destino || ''} (${ruta.region || ''})`);
 
-    // Origen: requiere campos comuna+region en logistics_centres (migración 2026-06)
-    if (!cd.comuna || !cd.region) {
-      console.warn('Centro sin commune/region configurado:', cd.id, cd.nombre);
+    if (!cd || !cd.comuna) {
+      console.warn('Centro sin comuna configurado:', cd?.id, cd?.nombre);
       [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
       continue;
     }
-    // Destino: campos comuna+region del registro de ruta
-    if (!ruta.comuna || !ruta.region) {
-      console.warn('Ruta sin commune/region:', ruta.codigo);
+    if (!ruta.comuna) {
+      console.warn('Ruta sin comuna:', ruta.codigo);
       [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
       continue;
     }
 
-    // Construir parámetros en formato "NombreComuna, NombreRegion"
-    const { origin: originCity, destination: destCity } = construirParametrosRuta(
-      { comuna: cd.comuna,   region: cd.region   },
-      { comuna: ruta.comuna, region: ruta.region }
-    );
+    // TollGuru geocodifica — basta con nombre de comuna (Edge Function añade ", Chile")
+    const originCity = cd.comuna.trim();
+    const destCity   = ruta.comuna.trim();
 
+    let tgIda = null, tgVuelta = null, errored = false;
+    try {
+      tgIda = await callTollGuruTolls(originCity, destCity);
+      await sleep(400);
+      tgVuelta = await callTollGuruTolls(destCity, originCity);
+      await sleep(400);
+    } catch (err) {
+      console.error('Error TollGuru para', ruta.codigo, err.message);
+      errored = true;
+    }
+
+    // Una respuesta TollGuru entrega ambos ejes → alimentamos las dos filas
     for (const ejes of [2, 3]) {
-      const category = ejesToCategory[ejes];
-      let ida = null, vuelta = null, errored = false;
-      try {
-        ida = await callGetApiTolls(originCity, destCity, category);
-        await sleep(500);
-        // Si destino no está en GetAPI (notFound), vuelta también queda en $0
-        if (!ida || ida.notFound) {
-          vuelta = ida; // mismo resultado: $0, no hay peaje en esa ruta
-        } else {
-          vuelta = await callGetApiTolls(destCity, originCity, category);
-          await sleep(500);
-        }
-      } catch (err) {
-        console.error('Error calculando peajes GetAPI para', ruta.codigo, ejes, 'ejes', err);
-        errored = true;
-      }
-
-      // GetAPI no retorna distanceMeters → km_ida/km_vuelta quedan null.
-      pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored });
-      if (cancelado) break;
+      const idaObj = tgIda ? {
+        tollCLP:      ejes === 2 ? (tgIda.total_2_ejes ?? 0) : (tgIda.total_3_ejes ?? 0),
+        hasToll:      tgIda.hasTolls ?? false,
+        distance_km:  tgIda.distance_km ?? null,
+      } : null;
+      const vueltaObj = tgVuelta ? {
+        tollCLP:      ejes === 2 ? (tgVuelta.total_2_ejes ?? 0) : (tgVuelta.total_3_ejes ?? 0),
+        hasToll:      tgVuelta.hasTolls ?? false,
+        distance_km:  tgVuelta.distance_km ?? null,
+      } : null;
+      pjUpsertToll(db, ruta.id, ejes, idaObj, vueltaObj, { error: errored });
     }
 
+    if (cancelado) break;
     if ((i + 1) % 10 === 0) saveDatabase(db);
   }
 
