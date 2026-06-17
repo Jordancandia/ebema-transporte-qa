@@ -341,6 +341,8 @@ function renderPeajesAuto(content, db, cfg) {
                 let estado;
                 if (!toll || !toll.calculado_en) {
                   estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN CALCULAR</span>`;
+                } else if (toll.notFound) {
+                  estado = `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-100 text-amber-800 font-label-caps text-[10px]" title="Destino no encontrado en catálogo GetAPI — ingresar peaje manualmente"><span class="material-symbols-outlined text-[14px]">location_off</span> SIN COBERTURA</span>`;
                 } else if (toll.needs_review) {
                   estado = `<span class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]"><span class="material-symbols-outlined text-[14px]">warning</span> REVISIÓN</span>`;
                 } else {
@@ -476,25 +478,43 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Mapeo Centro Logístico EBEMA → nombre de ciudad en GetAPI (/locations)
-// GetAPI soporta 31 ciudades fijas en sus rutas de peaje.
-const CENTRO_GETAPI_CITY = {
-  1001: 'Santiago (Vespucio Norte)',
-  1002: 'Santiago (Vespucio Norte)',
-  1003: 'Santiago (Vespucio Norte)',
-  1005: 'Santiago (Río Maipo)',
-  1020: 'Antofagasta (La Negra)',
-  1040: 'Coquimbo',
-  1050: 'Quillota',
-  1060: 'Rancagua',
-  1070: 'Talca',
-  1080: 'Concepción (vía Itata)',
-  1081: 'Concepción (vía Itata)',
-  1082: 'Concepción (vía Itata)',
-  1090: 'Temuco',
-  1100: 'Puerto Montt',
-  1160: 'Chillán',
+/**
+ * Construye el parámetro de ubicación para GetAPI Chile en formato
+ * "NombreComuna, NombreRegion" a partir de objetos con propiedades
+ * { comuna, region }. Esto elimina diccionarios hardcoded y usa
+ * directamente los campos estructurados de la base de datos.
+ *
+ * Ejemplo:
+ *   construirParametrosRuta(
+ *     { comuna: 'Quilicura', region: 'Metropolitana' },
+ *     { comuna: 'Loncoche',  region: 'La Araucanía'  }
+ *   )
+ *   → { origin: 'Quilicura, Metropolitana', destination: 'Loncoche, La Araucanía' }
+ *
+ * La codificación URL la maneja el Edge Function con URLSearchParams.
+ */
+// Mapea nombres oficiales largos de regiones a la forma corta que reconoce GetAPI.
+const REGION_ALIAS = {
+  "Libertador General Bernardo O'Higgins": "O'Higgins",
+  'Metropolitana de Santiago':             'Metropolitana',
+  'Magallanes y de la Antártica Chilena':  'Magallanes',
 };
+function normalizarRegion(region) {
+  if (!region) return region;
+  const r = String(region).trim();
+  return REGION_ALIAS[r] ?? r;
+}
+
+function construirParametrosRuta(origenObj, destinoObj) {
+  const fmt = (obj) => {
+    const partes = [obj.comuna, normalizarRegion(obj.region)].filter(Boolean).map(s => String(s).trim());
+    return partes.join(', ');
+  };
+  return {
+    origin:      fmt(origenObj),
+    destination: fmt(destinoObj)
+  };
+}
 
 // Invoca la Edge Function 'getapi-tolls' (proxy seguro hacia chile.getapi.cl)
 // Usa /route-cost con nombres de ciudad (el plan actual no incluye /route-cost-by-coords).
@@ -551,11 +571,20 @@ function pjUpsertToll(db, routeId, ejes, ida, vuelta, opts = {}) {
   row.ramp_vuelta        = vuelta ? Math.round(vuelta.rampCLP        || 0) : 0;
   row.electronic_vuelta  = vuelta ? Math.round(vuelta.electronicCLP  || 0) : 0;
 
-  // notFound = ruta sin peaje confirmada por GetAPI → $0 correcto, no necesita revisión
-  // needs_review si: API retornó 0 Y hasToll=true (precio inesperadamente vacío)
-  const idaReview    = !ida    || (ida.hasToll    && !ida.tollCLP);
-  const vueltaReview = !vuelta || (vuelta.hasToll && !vuelta.tollCLP);
+  // needs_review si:
+  //   - Sin resultado de API (error de red)
+  //   - notFound: ciudad no encontrada en GetAPI → no podemos confirmar si hay peaje → revisión manual
+  //   - hasToll=true pero tollCLP=0 → dato inconsistente
+  // notFound=false Y hasToll=false → ruta confirmada sin peaje → $0 correcto, no revisa
+  const idaReview    = !ida    || !!ida.notFound    || (ida.hasToll    && !ida.tollCLP);
+  const vueltaReview = !vuelta || !!vuelta.notFound || (vuelta.hasToll && !vuelta.tollCLP);
   row.needs_review = !!(idaReview || vueltaReview);
+  // Guardar motivo de revisión para mostrar en tabla
+  if ((ida && ida.notFound) || (vuelta && vuelta.notFound)) {
+    row.notFound = true;
+  } else {
+    row.notFound = false;
+  }
   row.calculado_en = now;
   row.updated_at   = now;
   return row;
@@ -837,22 +866,26 @@ async function calcularPeajes(content, db, cfg, rutas) {
     if (cancelado) break;
     const ruta = targets[i];
     const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
-    modal.update(i, targets.length, `${ruta.codigo} — ${ruta.destino || ''}`);
+    modal.update(i, targets.length, `${ruta.codigo} — ${ruta.comuna || ruta.destino || ''} (${ruta.region || ''})`);
 
-    if (!cd || cd.lat == null || cd.lon == null) {
+    // Origen: requiere campos comuna+region en logistics_centres (migración 2026-06)
+    if (!cd.comuna || !cd.region) {
+      console.warn('Centro sin commune/region configurado:', cd.id, cd.nombre);
+      [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
+      continue;
+    }
+    // Destino: campos comuna+region del registro de ruta
+    if (!ruta.comuna || !ruta.region) {
+      console.warn('Ruta sin commune/region:', ruta.codigo);
       [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
       continue;
     }
 
-    // Resolver ciudad de origen (Centro Logístico → nombre GetAPI)
-    const originCity = CENTRO_GETAPI_CITY[String(cd.id)] || CENTRO_GETAPI_CITY[Number(cd.id)];
-    if (!originCity) {
-      console.warn('Centro sin mapeo GetAPI:', cd.id, cd.nombre);
-      [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
-      continue;
-    }
-    // Destino: usar ruta.destino directamente (GetAPI acepta nombres de ciudades chilenas)
-    const destCity = ruta.destino;
+    // Construir parámetros en formato "NombreComuna, NombreRegion"
+    const { origin: originCity, destination: destCity } = construirParametrosRuta(
+      { comuna: cd.comuna,   region: cd.region   },
+      { comuna: ruta.comuna, region: ruta.region }
+    );
 
     for (const ejes of [2, 3]) {
       const category = ejesToCategory[ejes];
