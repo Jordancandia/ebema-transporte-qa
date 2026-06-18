@@ -1163,11 +1163,11 @@ async function calcularPeajes(content, db, cfg, rutas) {
   }
   const targets = rutas.filter(r => r.lat != null && r.lon != null);
   const sinCoords = rutas.length - targets.length;
-  const totalConsultas = targets.length * 2; // Ida + Vuelta (cada llamada retorna 2 y 3 ejes)
-  const estSeg = totalConsultas * 3; // ~3s por consulta TollGuru (2 llamadas internas paralelas)
+  const totalConsultas = targets.length; // Solo Ida, se duplica para Vuelta
+  const estSeg = totalConsultas * 3; // ~3s por consulta TollGuru
   const estMin = estSeg < 60 ? `~${estSeg}s` : `~${Math.ceil(estSeg / 60)} min`;
   const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
-  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s).\nIda + Vuelta = ${totalConsultas} consultas · cada una retorna 2 y 3 ejes. Tiempo estimado: ${estMin}.${aviso}\n¿Continuar?`)) {
+  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s).\nSolo Ida — el valor se duplica para Vuelta = ${totalConsultas} consultas · cada una retorna 2 y 3 ejes. Tiempo estimado: ${estMin}.${aviso}\n¿Continuar?`)) {
     return;
   }
 
@@ -1201,30 +1201,23 @@ async function calcularPeajes(content, db, cfg, rutas) {
     const originCity = cd.comuna.trim();
     const destCity   = ruta.comuna.trim();
 
-    let tgIda = null, tgVuelta = null, errored = false;
+    let tgIda = null, errored = false;
     try {
       tgIda = await callTollGuruTolls(originCity, destCity);
-      await sleep(400);
-      tgVuelta = await callTollGuruTolls(destCity, originCity);
       await sleep(400);
     } catch (err) {
       console.error('Error TollGuru para', ruta.codigo, err.message);
       errored = true;
     }
 
-    // Una respuesta TollGuru entrega ambos ejes → alimentamos las dos filas
+    // Solamente Ida — el valor de peaje se duplica para Vuelta
     for (const ejes of [2, 3]) {
       const idaObj = tgIda ? {
         tollCLP:      ejes === 2 ? (tgIda.total_2_ejes ?? 0) : (tgIda.total_3_ejes ?? 0),
         hasToll:      tgIda.hasTolls ?? false,
         distance_km:  tgIda.distance_km ?? null,
       } : null;
-      const vueltaObj = tgVuelta ? {
-        tollCLP:      ejes === 2 ? (tgVuelta.total_2_ejes ?? 0) : (tgVuelta.total_3_ejes ?? 0),
-        hasToll:      tgVuelta.hasTolls ?? false,
-        distance_km:  tgVuelta.distance_km ?? null,
-      } : null;
-      pjUpsertToll(db, ruta.id, ejes, idaObj, vueltaObj, { error: errored });
+      pjUpsertToll(db, ruta.id, ejes, idaObj, idaObj, { error: errored });
     }
 
     if (cancelado) break;
