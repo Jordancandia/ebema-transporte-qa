@@ -2352,6 +2352,10 @@ function renderResultados(content, db, cfg) {
 
   const grupoSel = groups.find(g => g.grupo === zcapFiltroCentro);
   const participacion = cfg.participacionRutas || {};
+  const groupMap = {};
+  groups.forEach(g => { groupMap[g.grupo] = g.nombre; });
+
+  const HEADERS = ['Centro', 'Ruta', 'Clasificación', 'KM', 'Peajes', 'Combustible', 'SOAP', 'Seguro', 'Mantención', 'Neumáticos', 'GPS', 'Rem. Chofer', 'Var. Chofer', 'Costo Ruta Total', 'Costo/KM Final', 'Participación', 'Tarifa Ponderada'];
 
   content.innerHTML = `
     <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
@@ -2369,7 +2373,7 @@ function renderResultados(content, db, cfg) {
           </button>
         </div>
       </div>
-      <p class="text-[12px] text-secondary mb-md">Calculado para las rutas activas y los tipos de camión según los filtros aplicados. "Actualizar Tarifas" recalcula y guarda Tarifa/KM y Tarifa Base (Tarifa por Camión) para el Centro Origen filtrado. Las columnas Participación y Tarifa Ponderada se calculan desde la vista Participación Rutas.</p>
+      <p class="text-[12px] text-secondary mb-md">Desglose completo de costos por ruta y tipo de camión. KM es solo ida; Peajes y Combustible consideran ida + vuelta. "Actualizar Tarifas" recalcula y guarda Tarifa/KM y Tarifa Base (Tarifa por Camión) para el Centro Origen filtrado. Las columnas Participación y Tarifa Ponderada se calculan desde la vista Participación Rutas.</p>
 
       <div class="flex flex-wrap items-end gap-md mb-md">
         <div>
@@ -2393,34 +2397,31 @@ function renderResultados(content, db, cfg) {
         <table class="w-full zebra-table border-collapse">
           <thead>
             <tr class="bg-surface-container-high text-left border-b border-outline-variant">
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Centro</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Clasificación</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">KM</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Peajes</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Combustible</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Ruta Total</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo/KM Final</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right bg-primary/5">ZCAP</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Participación</th>
-              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Tarifa Ponderada</th>
+              ${HEADERS.map(h => `<th class="p-md font-label-caps text-label-caps text-secondary uppercase${h === 'KM' || h !== 'Centro' && h !== 'Ruta' && h !== 'Clasificación' ? ' text-right' : ''}">${h}</th>`).join('')}
             </tr>
           </thead>
           <tbody class="font-body-md text-body-md">
-            ${matriz.length === 0 ? `<tr><td colspan="11" class="p-md text-center text-secondary">Sin resultados para los filtros seleccionados.</td></tr>` :
+            ${matriz.length === 0 ? `<tr><td colspan="${HEADERS.length}" class="p-md text-center text-secondary">Sin resultados para los filtros seleccionados.</td></tr>` :
               matriz.map(m => {
                 const pct = participacion[m.ruta.id]?.pct || 0;
                 const tarifaPonderada = ((m.item11_costoKmFinal || 0) * pct / 100);
+                const grupoNombre = groupMap[m.ruta.origen_grupo] || m.ruta.origen_grupo;
                 return `<tr class="border-b border-outline-variant">
-                <td class="p-md">${getCentreName(db, m.centroId)}</td>
-                <td class="p-md font-bold">${m.ruta.codigo} — ${m.ruta.destino}</td>
+                <td class="p-md font-bold">${grupoNombre}</td>
+                <td class="p-md">${m.ruta.codigo} — ${m.ruta.destino}</td>
                 <td class="p-md">${m.ruta.clasificRuta || ''}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${m.km}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item1_peajes)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item2_combustible)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item3_soapKm)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item4_seguroKm)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item5_mantKm)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item6_neumKm)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item7_gpsKm)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item8_choferBaseDiario)}</td>
+                <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item9_varChofer)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item10_costoRutaTotal)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(m.item11_costoKmFinal)}</td>
-                <td class="p-md text-right font-data-mono text-data-mono font-bold bg-primary/5">${formatCLP(m.zcap)}</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${pct.toFixed(2)}%</td>
                 <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(Math.round(tarifaPonderada))}</td>
               </tr>`}).join('')}
@@ -2449,21 +2450,35 @@ function renderResultados(content, db, cfg) {
   });
 
   document.getElementById('zcap-export').addEventListener('click', () => {
-    const headers = ['Codigo_Centro', 'Ruta_ID', 'Destino_Comuna', 'Clasificacion', 'Tipo_Camion_Kg', 'Ejes', 'Valor_ZCAP_KM'];
+    const headers = ['Grupo_Centro', 'Ruta_ID', 'Destino', 'Clasificacion', 'Tipo_Camion_Kg', 'KM', 'Peajes', 'Combustible', 'SOAP', 'Seguro', 'Mantencion', 'Neumaticos', 'GPS', 'Rem_Chofer', 'Var_Chofer', 'Costo_Ruta_Total', 'Costo_KM_Final', 'Participacion_Pct', 'Tarifa_Ponderada'];
     const rows = matriz.map(m => {
-      const cd = db.logisticsCentres.find(c => c.id === m.centroId);
+      const grupoNombre = groupMap[m.ruta.origen_grupo] || m.ruta.origen_grupo;
+      const pct = participacion[m.ruta.id]?.pct || 0;
+      const tarifaPonderada = ((m.item11_costoKmFinal || 0) * pct / 100);
       return [
-        cd ? cd.id : m.centroId,
+        grupoNombre,
         m.ruta.codigo,
         m.ruta.destino,
         m.ruta.clasificRuta || '',
         m.truckType.capKg,
-        m.ejes,
-        Math.round(m.item11_costoKmFinal)
+        m.km,
+        Math.round(m.item1_peajes),
+        Math.round(m.item2_combustible),
+        Math.round(m.item3_soapKm),
+        Math.round(m.item4_seguroKm),
+        Math.round(m.item5_mantKm),
+        Math.round(m.item6_neumKm),
+        Math.round(m.item7_gpsKm),
+        Math.round(m.item8_choferBaseDiario),
+        Math.round(m.item9_varChofer),
+        Math.round(m.item10_costoRutaTotal),
+        Math.round(m.item11_costoKmFinal),
+        pct.toFixed(2),
+        Math.round(tarifaPonderada)
       ];
     });
-    downloadFile(`zcap_transporte_${Date.now()}.csv`, toCSV(headers, rows));
-    showAlert('Archivo CSV de costos de transporte exportado');
+    downloadFile(`motor_costo_${Date.now()}.csv`, toCSV(headers, rows));
+    showAlert('Archivo CSV del Motor de Costo exportado');
   });
 }
 
