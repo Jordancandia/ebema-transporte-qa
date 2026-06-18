@@ -13,9 +13,7 @@ let activeSub = 'peajes';
 let pjFiltroTexto = '';
 let pjFiltroComuna = '';
 let pjFiltroCentro = '';
-let pjFiltroClasificacion = 'Regional';
 let pjFiltroPendientes = false;
-let pjFiltroTipo = 'Comuna';
 
 // Estado de filtros de la vista "Peajes Interregionales"
 let pjiFiltroComuna = '';
@@ -191,19 +189,18 @@ function renderPeajes(content, db, cfg) {
 
 // ---------- Cálculo Automático de Peajes (Google Routes API) ----------
 function renderPeajesAuto(content, db, cfg) {
-  const routes = (db.routes || []).filter(r => r.activo);
+  // Solo rutas Regionales con zona tipo Comuna
+  const comunaZonas = new Set((db.transportZones || []).filter(z => z.tipo === 'Comuna').map(z => z.zona));
+  const routes = (db.routes || []).filter(r => r.activo && r.clasificRuta === 'Regional' && comunaZonas.has(r.id_zona_transporte));
 
-  // COMMUNE filter: only zones with tipo=COMUNA
   const zonasComunas = (db.transportZones || []).filter(z => z.tipo === 'Comuna');
   const comunasDisponibles = [...new Map(
     zonasComunas.map(z => [z.zona, { id: z.zona, label: z.denominacion || z.zona }])
   ).values()].sort((a, b) => a.label.localeCompare(b.label));
 
-  // Centro Origen: groups
   const grupos = getOrigenGroups(db);
   const centrosOrigen = grupos.map(g => ({ id: g.grupo, nombre: g.nombre }));
 
-  // Construir filas (ruta x tipo de eje)
   let rows = [];
   routes.forEach(ruta => {
     [2, 3].forEach(ejes => {
@@ -211,22 +208,12 @@ function renderPeajesAuto(content, db, cfg) {
     });
   });
 
-  // Aplicar filtros de pantalla
   if (pjFiltroComuna) {
     rows = rows.filter(r => r.ruta.id_zona_transporte === pjFiltroComuna);
-  }
-  if (pjFiltroTipo) {
-    rows = rows.filter(r => {
-      const z = (db.transportZones || []).find(z => z.zona === r.ruta.id_zona_transporte);
-      return z && z.tipo === pjFiltroTipo;
-    });
   }
   if (pjFiltroCentro) {
     const g = grupos.find(g => g.grupo === pjFiltroCentro);
     if (g) rows = rows.filter(r => g.centroIds.includes(r.ruta.origenId));
-  }
-  if (pjFiltroClasificacion) {
-    rows = rows.filter(r => r.ruta.clasificRuta === pjFiltroClasificacion);
   }
   if (pjFiltroPendientes) {
     rows = rows.filter(r => !r.toll || !r.toll.calculado_en || r.toll.needs_review);
@@ -251,16 +238,13 @@ function renderPeajesAuto(content, db, cfg) {
         <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Peajes por Ruta — Cálculo Automático</h2>
       </div>
       <p class="text-[12px] text-secondary mb-md">
-        Calcula el costo de peaje de Ida y Vuelta de cada ruta vía Google Routes API, según el tipo de camión
-        (2 ejes: 5 y 10 Ton · 3 ejes: 15 y 28 Ton). El KM mostrado es de ida (un solo sentido).
-        El cálculo se ejecuta a demanda y queda registrado para no repetirse. Las rutas sin peaje quedan en $0;
-        las rutas donde se detectó un peaje sin valor disponible quedan marcadas <b>Para revisión</b>
-        y todos los valores son editables manualmente.
+        Costos de peaje para rutas Regionales con zona Comuna. KM mostrado es de ida (un solo sentido).
+        El cálculo se ejecuta a demanda y queda registrado en cache para no repetirse.
       </p>
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-md mb-md">
         <div class="bg-surface-container-low p-md rounded">
-          <p class="font-label-caps text-label-caps text-secondary">Rutas Activas</p>
+          <p class="font-label-caps text-label-caps text-secondary">Rutas Regionales</p>
           <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${routes.length}</p>
         </div>
         <div class="bg-surface-container-low p-md rounded">
@@ -279,14 +263,6 @@ function renderPeajesAuto(content, db, cfg) {
 
       <div class="flex flex-wrap gap-sm items-end mb-md">
         <div class="space-y-xs">
-          <label class="font-label-caps text-label-caps text-secondary block">TIPO</label>
-          <select id="pj-f-tipo" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-36">
-            <option value="">Todos</option>
-            <option value="Comuna" ${pjFiltroTipo === 'Comuna' ? 'selected' : ''}>COMUNA</option>
-            <option value="Sector" ${pjFiltroTipo === 'Sector' ? 'selected' : ''}>SECTOR</option>
-          </select>
-        </div>
-        <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary block">COMUNA</label>
           <select id="pj-f-comuna" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-52">
             <option value="">Todas</option>
@@ -299,23 +275,6 @@ function renderPeajesAuto(content, db, cfg) {
             <option value="">Todos</option>
             ${centrosOrigen.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === pjFiltroCentro ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
           </select>
-        </div>
-        <div class="space-y-xs">
-          <label class="font-label-caps text-label-caps text-secondary block">CLASIFICACIÓN</label>
-          <div class="flex gap-xs">
-            ${[
-              { val: '',              label: 'Todas',          count: routes.length },
-              { val: 'Regional',      label: 'Regional',       count: routes.filter(r => r.clasificRuta === 'Regional').length },
-              { val: 'Interregional', label: 'Interregional',  count: routes.filter(r => r.clasificRuta === 'Interregional').length },
-            ].map(opt => {
-              const active = pjFiltroClasificacion === opt.val;
-              return `<button id="pj-f-clasif-${opt.val || 'all'}"
-                class="px-sm py-[6px] text-[11px] font-bold rounded border transition-colors leading-tight text-center
-                  ${active ? 'bg-primary text-white border-primary shadow-sm' : 'bg-white text-on-surface border-[#CED4DA] hover:bg-surface-container-high'}">
-                ${opt.label}<br><span class="font-normal opacity-80">${opt.count} rutas</span>
-              </button>`;
-            }).join('')}
-          </div>
         </div>
         <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary flex items-center gap-xs cursor-pointer">
@@ -433,15 +392,11 @@ function renderPeajesAuto(content, db, cfg) {
     });
   });
 
-  document.getElementById('pj-f-tipo').addEventListener('change', (e) => { pjFiltroTipo = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-origen').addEventListener('change', (e) => { pjFiltroCentro = e.target.value; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-f-clasif-all').addEventListener('click',          () => { pjFiltroClasificacion = '';              renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-f-clasif-Regional').addEventListener('click',      () => { pjFiltroClasificacion = 'Regional';      renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-f-clasif-Interregional').addEventListener('click', () => { pjFiltroClasificacion = 'Interregional'; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroComuna = ''; pjFiltroCentro = ''; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-export').addEventListener('click', () => exportPeajesCSV(db, rows));
   document.getElementById('pj-export-cache').addEventListener('click', () => exportRouteTollsCSV(db));
   document.getElementById('pj-import-cache').addEventListener('click', () => document.getElementById('pj-import-cache-input').click());
