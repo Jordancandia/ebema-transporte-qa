@@ -290,11 +290,20 @@ function renderPeajesAuto(content, db, cfg) {
         </div>
         <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary block">CLASIFICACIÓN</label>
-          <select id="pj-f-clasif" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-40">
-            <option value="">Todas</option>
-            <option value="Regional" ${pjFiltroClasificacion === 'Regional' ? 'selected' : ''}>Regional</option>
-            <option value="Interregional" ${pjFiltroClasificacion === 'Interregional' ? 'selected' : ''}>Interregional</option>
-          </select>
+          <div class="flex gap-xs">
+            ${[
+              { val: '',              label: 'Todas',          count: routes.length },
+              { val: 'Regional',      label: 'Regional',       count: routes.filter(r => r.clasificRuta === 'Regional').length },
+              { val: 'Interregional', label: 'Interregional',  count: routes.filter(r => r.clasificRuta === 'Interregional').length },
+            ].map(opt => {
+              const active = pjFiltroClasificacion === opt.val;
+              return `<button id="pj-f-clasif-${opt.val || 'all'}"
+                class="px-sm py-[6px] text-[11px] font-bold rounded border transition-colors leading-tight text-center
+                  ${active ? 'bg-primary text-white border-primary shadow-sm' : 'bg-white text-on-surface border-[#CED4DA] hover:bg-surface-container-high'}">
+                ${opt.label}<br><span class="font-normal opacity-80">${opt.count} rutas</span>
+              </button>`;
+            }).join('')}
+          </div>
         </div>
         <div class="space-y-xs">
           <label class="font-label-caps text-label-caps text-secondary flex items-center gap-xs cursor-pointer">
@@ -405,7 +414,9 @@ function renderPeajesAuto(content, db, cfg) {
   document.getElementById('pj-f-tipo').addEventListener('change', (e) => { pjFiltroTipo = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-comuna').addEventListener('change', (e) => { pjFiltroComuna = e.target.value; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-origen').addEventListener('change', (e) => { pjFiltroCentro = e.target.value; renderPeajesAuto(content, db, cfg); });
-  document.getElementById('pj-f-clasif').addEventListener('change', (e) => { pjFiltroClasificacion = e.target.value; renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-clasif-all').addEventListener('click',          () => { pjFiltroClasificacion = '';              renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-clasif-Regional').addEventListener('click',      () => { pjFiltroClasificacion = 'Regional';      renderPeajesAuto(content, db, cfg); });
+  document.getElementById('pj-f-clasif-Interregional').addEventListener('click', () => { pjFiltroClasificacion = 'Interregional'; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-f-pend').addEventListener('change', (e) => { pjFiltroPendientes = e.target.checked; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-kpi-pendientes').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
   document.getElementById('pj-kpi-revision').addEventListener('click', () => { pjFiltroPendientes = true; pjFiltroTipo = ''; pjFiltroComuna = ''; pjFiltroCentro = ''; pjFiltroClasificacion = ''; renderPeajesAuto(content, db, cfg); });
