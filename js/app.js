@@ -6,6 +6,7 @@ import { renderRatesView } from './rates.js';
 import { renderRolesView } from './roles.js';
 import { renderTariffTransportView } from './tarifas-transporte.js';
 import { renderClientTariffView } from './tarifas-clientes.js';
+import { renderTroncalesView } from './troncales.js';
 import { showAlert, formatRut, validateRut, formatPhone } from './utils.js';
 
 const SESSION_KEY = 'ebema_user_session';
@@ -930,6 +931,12 @@ function renderDashboardShell() {
           <span class="font-body-md text-body-md">Roles y Perfiles</span>
         </a>
 
+        <!-- Troncales -->
+        <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="troncales" id="nav-troncales">
+          <span class="material-symbols-outlined">sync_alt</span>
+          <span class="font-body-md text-body-md">Troncales</span>
+        </a>
+
         <!-- Administrador de Tarifas Transporte -->
         <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="tarifas-transporte" id="nav-tarifas-transporte">
           <span class="material-symbols-outlined">calculate</span>
@@ -1044,6 +1051,10 @@ function switchTab(tabName) {
     case 'tarifas-transporte':
       pageTitle.textContent = 'Administrador de Tarifas Transporte';
       renderTariffTransportView(stage);
+      break;
+    case 'troncales':
+      pageTitle.textContent = 'Camiones Troncales';
+      renderTroncalesView(stage);
       break;
     case 'tarifas-clientes':
       pageTitle.textContent = 'Administrador de Tarifas Clientes';

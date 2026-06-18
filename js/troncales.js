@@ -1,0 +1,274 @@
+import { getDatabase, saveDatabase, getOrigenGroups } from './data.js';
+import { showAlert, escapeHtml } from './utils.js';
+
+const CAPACIDADES = ['5', '10', '15', '28'];
+
+function generarId() {
+  return 'tr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+}
+
+function parseCamiones(db) {
+  return (db.troncales || []).map(t => ({
+    ...t,
+    camiones: t.camiones || [],
+    rutasCobertura: t.rutasCobertura || []
+  }));
+}
+
+export function renderTroncalesView(container) {
+  const db = getDatabase();
+  let troncales = parseCamiones(db);
+  let filtroTexto = '';
+
+  function render() {
+    const grupos = getOrigenGroups(db);
+    const filtered = troncales.filter(t => {
+      if (!filtroTexto) return true;
+      const q = filtroTexto.toLowerCase();
+      return (t.razonSocial || '').toLowerCase().includes(q)
+        || (t.rut || '').toLowerCase().includes(q);
+    });
+
+    container.innerHTML = `
+      <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm rounded-lg">
+        <div class="flex items-center justify-between mb-md border-b border-outline-variant pb-sm">
+          <div class="flex items-center gap-sm">
+            <span class="material-symbols-outlined text-primary">sync_alt</span>
+            <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Camiones Troncales</h2>
+          </div>
+          <div class="flex items-center gap-sm">
+            <input id="tr-filtro" type="text" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48 rounded" placeholder="Buscar..." value="${escapeHtml(filtroTexto)}">
+            <button id="tr-nuevo" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+              <span class="material-symbols-outlined text-[18px]">add</span> Nuevo Troncal
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
+          <table class="w-full zebra-table border-collapse">
+            <thead>
+              <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Razón Social</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase">RUT</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Rutas de Cobertura</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Flota</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Activo</th>
+                <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody class="font-body-md text-body-md">
+              ${filtered.length === 0 ? `<tr><td colspan="6" class="p-md text-center text-secondary">No hay camiones troncales registrados.</td></tr>` :
+                filtered.map(t => {
+                  const rutasStr = t.rutasCobertura.map(r => `${r.origen} → ${r.destino}`).join(', ') || '—';
+                  const flotaStr = t.camiones.map(c => `${c.patente} (${c.capacidad}T)`).join(', ') || '—';
+                  return `<tr class="border-b border-outline-variant">
+                    <td class="p-md font-bold">${escapeHtml(t.razonSocial || '')}</td>
+                    <td class="p-md">${escapeHtml(t.rut || '')}</td>
+                    <td class="p-md text-[12px]">${escapeHtml(rutasStr)}</td>
+                    <td class="p-md text-[12px]">${escapeHtml(flotaStr)}</td>
+                    <td class="p-md text-center">${t.activo !== false
+                      ? '<span class="inline-flex items-center px-2 py-1 rounded bg-green-100 text-green-800 font-label-caps text-[10px]">SÍ</span>'
+                      : '<span class="inline-flex items-center px-2 py-1 rounded bg-red-100 text-red-800 font-label-caps text-[10px]">NO</span>'}</td>
+                    <td class="p-md text-center">
+                      <button class="tr-editar text-secondary hover:text-primary" data-id="${t.id}" title="Editar">
+                        <span class="material-symbols-outlined text-[18px]">edit</span>
+                      </button>
+                      <button class="tr-eliminar text-secondary hover:text-primary ml-sm" data-id="${t.id}" title="Eliminar">
+                        <span class="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </td>
+                  </tr>`;
+                }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p class="text-[11px] text-secondary mt-sm">${filtered.length} registro(s)</p>
+      </div>
+    `;
+
+    document.getElementById('tr-filtro').addEventListener('input', (e) => {
+      filtroTexto = e.target.value;
+      render();
+    });
+
+    document.getElementById('tr-nuevo').addEventListener('click', () => abrirModal(null, grupos, db, render));
+
+    container.querySelectorAll('.tr-editar').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = troncales.find(x => x.id === btn.dataset.id);
+        if (t) abrirModal(t, grupos, db, render);
+      });
+    });
+
+    container.querySelectorAll('.tr-eliminar').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!confirm('¿Eliminar este troncal?')) return;
+        db.troncales = (db.troncales || []).filter(x => x.id !== btn.dataset.id);
+        saveDatabase(db);
+        troncales = parseCamiones(db);
+        render();
+      });
+    });
+  }
+
+  render();
+}
+
+function abrirModal(troncal, grupos, db, onSave) {
+  const esNuevo = !troncal;
+  const t = troncal || { id: generarId(), razonSocial: '', rut: '', activo: true, camiones: [], rutasCobertura: [] };
+
+  const centrosOrigen = grupos.map(g => ({ value: g.grupo, label: g.nombre }));
+
+  const el = document.createElement('div');
+  el.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md';
+  el.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl p-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center gap-sm mb-md">
+        <span class="material-symbols-outlined text-primary">sync_alt</span>
+        <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface">${esNuevo ? 'Nuevo' : 'Editar'} Troncal</h3>
+      </div>
+
+      <div class="space-y-md">
+        <div class="grid grid-cols-2 gap-md">
+          <div class="space-y-xs">
+            <label class="font-label-caps text-label-caps text-secondary block">RAZÓN SOCIAL</label>
+            <input id="t-razon" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded" value="${escapeHtml(t.razonSocial || '')}">
+          </div>
+          <div class="space-y-xs">
+            <label class="font-label-caps text-label-caps text-secondary block">RUT</label>
+            <input id="t-rut" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded" value="${escapeHtml(t.rut || '')}">
+          </div>
+        </div>
+
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">RUTAS DE COBERTURA (origen → destino entre centros)</label>
+          <div id="t-rutas-container" class="space-y-sm">
+            ${(t.rutasCobertura.length === 0
+              ? '<p class="text-[12px] text-secondary">Sin rutas asignadas.</p>'
+              : t.rutasCobertura.map((r, i) => rutaRow(r, i, centrosOrigen)).join(''))}
+          </div>
+          <button id="t-add-ruta" class="text-primary text-[12px] font-bold flex items-center gap-xs mt-sm cursor-pointer hover:underline">
+            <span class="material-symbols-outlined text-[16px]">add_circle</span> Agregar Ruta
+          </button>
+        </div>
+
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">FLOTA DE CAMIONES</label>
+          <div id="t-camiones-container" class="space-y-sm">
+            ${(t.camiones.length === 0
+              ? '<p class="text-[12px] text-secondary">Sin camiones registrados.</p>'
+              : t.camiones.map((c, i) => camionRow(c, i)).join(''))}
+          </div>
+          <button id="t-add-camion" class="text-primary text-[12px] font-bold flex items-center gap-xs mt-sm cursor-pointer hover:underline">
+            <span class="material-symbols-outlined text-[16px]">add_circle</span> Agregar Camión
+          </button>
+        </div>
+
+        <div class="flex items-center gap-sm">
+          <input type="checkbox" id="t-activo" ${t.activo !== false ? 'checked' : ''}>
+          <label for="t-activo" class="font-body-md text-body-md">Activo</label>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-sm mt-lg pt-md border-t border-outline-variant">
+        <button id="t-cancel" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded text-[12px] uppercase cursor-pointer">Cancelar</button>
+        <button id="t-save" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded text-[12px] uppercase cursor-pointer">${esNuevo ? 'Crear' : 'Guardar'}</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(el);
+
+  el.querySelector('#t-cancel').addEventListener('click', () => el.remove());
+
+  el.querySelector('#t-add-ruta').addEventListener('click', () => {
+    const container = el.querySelector('#t-rutas-container');
+    const idx = container.querySelectorAll('.ruta-row').length;
+    container.insertAdjacentHTML('beforeend', rutaRow({ origen: '', destino: '' }, idx, centrosOrigen));
+  });
+
+  el.querySelector('#t-add-camion').addEventListener('click', () => {
+    const container = el.querySelector('#t-camiones-container');
+    const idx = container.querySelectorAll('.camion-row').length;
+    container.insertAdjacentHTML('beforeend', camionRow({ patente: '', modelo: '', capacidad: '28', ejes: 3 }, idx));
+  });
+
+  el.querySelector('#t-save').addEventListener('click', () => {
+    const razonSocial = el.querySelector('#t-razon').value.trim();
+    const rut = el.querySelector('#t-rut').value.trim();
+    if (!razonSocial) return showAlert('La Razón Social es obligatoria.', 'error');
+
+    const rutas = [];
+    el.querySelectorAll('.ruta-row').forEach(row => {
+      const origen = row.querySelector('.ruta-origen').value;
+      const destino = row.querySelector('.ruta-destino').value;
+      if (origen && destino) rutas.push({ origen, destino });
+    });
+
+    const camiones = [];
+    el.querySelectorAll('.camion-row').forEach(row => {
+      const patente = row.querySelector('.cam-patente').value.trim();
+      const modelo = row.querySelector('.cam-modelo').value.trim();
+      const capacidad = Number(row.querySelector('.cam-capacidad').value) || 28;
+      const ejes = Number(row.querySelector('.cam-ejes').value) || 3;
+      if (patente) camiones.push({ patente, modelo, capacidad, ejes });
+    });
+
+    const data = {
+      id: t.id,
+      razonSocial,
+      rut,
+      activo: el.querySelector('#t-activo').checked,
+      rutasCobertura: rutas,
+      camiones
+    };
+
+    if (esNuevo) {
+      db.troncales = db.troncales || [];
+      db.troncales.push(data);
+    } else {
+      const idx = (db.troncales || []).findIndex(x => x.id === t.id);
+      if (idx !== -1) db.troncales[idx] = data;
+    }
+
+    saveDatabase(db);
+    el.remove();
+    showAlert(esNuevo ? 'Troncal creado.' : 'Troncal actualizado.');
+    onSave();
+  });
+}
+
+function rutaRow(r, idx, centros) {
+  const opts = centros.map(c =>
+    `<option value="${c.value}" ${r.origen === c.value ? 'selected' : ''}>${c.label}</option>`
+  ).join('');
+  const optsD = centros.map(c =>
+    `<option value="${c.value}" ${r.destino === c.value ? 'selected' : ''}>${c.label}</option>`
+  ).join('');
+  return `<div class="ruta-row flex gap-sm items-center">
+    <select class="ruta-origen border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40">${opts}</select>
+    <span class="text-secondary">→</span>
+    <select class="ruta-destino border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40">${optsD}</select>
+    <button type="button" class="ruta-remove text-red-600 hover:text-red-800 cursor-pointer" title="Eliminar ruta">
+      <span class="material-symbols-outlined text-[18px]">remove_circle</span>
+    </button>
+  </div>`;
+}
+
+function camionRow(c, idx) {
+  const caps = CAPACIDADES.map(cap =>
+    `<option value="${cap}" ${String(c.capacidad) === cap ? 'selected' : ''}>${cap} Ton</option>`
+  ).join('');
+  return `<div class="camion-row flex gap-sm items-center">
+    <input type="text" class="cam-patente border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28" placeholder="Patente" value="${escapeHtml(c.patente || '')}">
+    <input type="text" class="cam-modelo border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40" placeholder="Modelo" value="${escapeHtml(c.modelo || '')}">
+    <select class="cam-capacidad border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28">${caps}</select>
+    <select class="cam-ejes border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-24">
+      <option value="2" ${c.ejes === 2 ? 'selected' : ''}>2 Ejes</option>
+      <option value="3" ${c.ejes === 3 ? 'selected' : ''}>3 Ejes</option>
+    </select>
+    <button type="button" class="camion-remove text-red-600 hover:text-red-800 cursor-pointer" title="Eliminar camión">
+      <span class="material-symbols-outlined text-[18px]">remove_circle</span>
+    </button>
+  </div>`;
+}

@@ -543,7 +543,25 @@ const defaultData = {
   transportZones: [],
 
   // 10. Peajes por ruta (ida/vuelta, por tipo de camión según ejes: 2 o 3)
-  routeTolls: []
+  routeTolls: [],
+
+  // 11. Camiones Troncales (servicio de larga distancia entre centros)
+  troncales: [
+    {
+      id: 'tr1',
+      razonSocial: 'Transportes Troncales del Sur Ltda',
+      rut: '77.123.456-7',
+      activo: true,
+      rutasCobertura: [
+        { origen: 'SANTIAGO', destino: 'CONCEPCION' },
+        { origen: 'SANTIAGO', destino: 'TEMUCO' }
+      ],
+      camiones: [
+        { patente: 'XX-YY-12', modelo: 'Volvo FH 460', capacidad: 28, ejes: 3 },
+        { patente: 'XX-YY-13', modelo: 'Scania R500', capacidad: 28, ejes: 3 }
+      ]
+    }
+  ]
 };
 
 // Obtener la base de datos en memoria (Supabase) o respaldo local
@@ -606,6 +624,12 @@ export function getDatabase() {
   // Migración: Asegurar que existe la colección de Peajes por Ruta
   if (!parsed.routeTolls) {
     parsed.routeTolls = [];
+    migrado = true;
+  }
+
+  // Migración: Asegurar que existe la colección de Troncales
+  if (!parsed.troncales) {
+    parsed.troncales = defaultData.troncales ? JSON.parse(JSON.stringify(defaultData.troncales)) : [];
     migrado = true;
   }
 
