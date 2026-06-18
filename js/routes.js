@@ -190,6 +190,7 @@ function renderRutasSubview(container) {
               <th class="p-md">Región</th>
               <th class="p-md">Tipo</th>
               <th class="p-md">Clasificación</th>
+              <th class="p-md">Factor</th>
               <th class="p-md">KM</th>
               <th class="p-md">Estado ERP</th>
               <th class="p-md">Latitud</th>
@@ -311,9 +312,9 @@ function renderRutasSubview(container) {
               <div class="space-y-xs">
                 <label for="r-caracteristica" class="font-label-caps text-label-caps text-secondary block">CARACTERÍSTICA ESPECIAL (TARIFAS)</label>
                 <select id="r-caracteristica" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary focus:ring-0 transition-all rounded bg-white" required>
-                  <option value="NORMAL">NORMAL</option>
-                  <option value="EXTREMA">EXTREMA</option>
-                  <option value="ISLA">ISLA</option>
+                  <option value="NORMAL">1 — NORMAL</option>
+                  <option value="EXTREMA">3 — EXTREMA</option>
+                  <option value="ISLA">2 — ISLA</option>
                 </select>
               </div>
             </div>
@@ -788,6 +789,10 @@ function renderRutasSubview(container) {
         const clasifCsv = (getField(row, 'clasificacion', 'clasificación') || '').trim();
         const kmRaw = getField(row, 'km');
         const kmCsv = kmRaw !== '' && kmRaw !== undefined ? Number(kmRaw) : null;
+        const factorRutaRaw = getField(row, 'factor_ruta', 'factorruta');
+        const factorRutaNum = factorRutaRaw !== '' && factorRutaRaw !== undefined ? Number(factorRutaRaw) : 0;
+        const factorRutaMap = { 1: 'NORMAL', 2: 'ISLA', 3: 'EXTREMA' };
+        const factorRutaCsv = factorRutaMap[factorRutaNum] || (['NORMAL', 'ISLA', 'EXTREMA'].includes(factorRutaRaw?.toUpperCase()) ? factorRutaRaw.toUpperCase() : '');
         const latRaw = getField(row, 'latitud', 'lat');
         const lonRaw = getField(row, 'longitud', 'lon');
         const latCsv = (latRaw !== '' && latRaw !== undefined) ? Number(latRaw) : null;
@@ -881,7 +886,7 @@ function renderRutasSubview(container) {
             tipo: clasifNorm,
             km: (kmCsv !== null && !isNaN(kmCsv)) ? kmCsv : 0,
             estado_erp,
-            caracteristica: 'NORMAL',
+            caracteristica: factorRutaCsv || 'NORMAL',
             lat: georefCsv ? georefCsv.lat : null,
             lon: georefCsv ? georefCsv.lon : null,
             georef_estado: georefEstado,
@@ -1059,7 +1064,7 @@ function renderRoutesTable(routesList) {
   if (routesList.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="16" class="p-xl text-center text-secondary">
+        <td colspan="17" class="p-xl text-center text-secondary">
           No se encontraron rutas registradas.
         </td>
       </tr>
@@ -1100,6 +1105,11 @@ function renderRoutesTable(routesList) {
       <td class="p-md text-xs">${campoPendiente(r.region)}</td>
       <td class="p-md text-xs"><span class="bg-surface-container-high px-sm py-1 border border-outline-variant rounded text-xs">${escapeHtml(r.clasificRuta) || '—'}</span></td>
       <td class="p-md text-xs"><span class="bg-surface-container-high px-sm py-1 border border-outline-variant rounded text-xs">${escapeHtml(r.tipo) || '—'}</span></td>
+      <td class="p-md">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${CARACT_STYLES[r.caracteristica || 'NORMAL']}">
+          ${r.caracteristica === 'NORMAL' ? '1' : r.caracteristica === 'ISLA' ? '2' : r.caracteristica === 'EXTREMA' ? '3' : '—'}
+        </span>
+      </td>
       <td class="p-md font-bold font-data-mono text-xs">${r.km ? r.km + ' KM' : campoPendiente('')}</td>
       <td class="p-md">
         <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${statusErp}">
