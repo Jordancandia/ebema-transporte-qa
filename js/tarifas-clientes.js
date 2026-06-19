@@ -226,6 +226,12 @@ export function renderClientTariffView(container) {
   const ccfg = getClientTariffConfig(db);
   ensureCcfg(ccfg);
 
+  // Restaurar datos históricos desde la base de datos
+  if (ccfg.historico && ccfg.historico.length) {
+    histData = ccfg.historico;
+    oficinaToGrupo = computeOficinaGrupos(db, histData);
+  }
+
   container.innerHTML = `
     <div class="mb-xl">
       <h1 class="font-headline-lg text-headline-lg text-on-surface">Administrador de Tarifas Clientes</h1>
@@ -320,7 +326,7 @@ function renderHistorico(content, db, ccfg) {
         <div class="flex-1">
           <p class="font-body-md font-bold text-on-surface">Cargar CSV de despachos históricos</p>
           <p class="text-[11px] text-secondary">Columnas: Fecha Transporte; Oficina Entrega; Documento Transporte; Gasto Transporte; HES; ID Cliente; ID Obra; Transportista; Cap. Camión; Entrega; ID Ruta; ID Transportista; Ton</p>
-          ${ccfg.histMeta.uploadDate ? `<p class="text-[11px] text-primary mt-xs">Cargado: <b>${ccfg.histMeta.fileName}</b> — ${ccfg.histMeta.rowCount.toLocaleString()} filas el ${ccfg.histMeta.uploadDate} (sólo en memoria)</p>` : ''}
+          ${ccfg.histMeta.uploadDate ? `<p class="text-[11px] text-primary mt-xs">Cargado: <b>${ccfg.histMeta.fileName}</b> — ${ccfg.histMeta.rowCount.toLocaleString()} filas el ${ccfg.histMeta.uploadDate}</p>` : ''}
         </div>
         <input type="file" id="hist-csv" accept=".csv" class="text-[12px]">
       </div>
@@ -397,8 +403,11 @@ function renderHistorico(content, db, ccfg) {
       // Calcular mapa oficina → nombre de grupo (via db.routes.origen_grupo)
       oficinaToGrupo = computeOficinaGrupos(db, parsed);
       ccfg.histMeta = { uploadDate: formatDateDDMMYYYY(new Date()), rowCount: parsed.length, fileName: file.name };
+      ccfg.historico = parsed;
       saveDatabase(db);
-      showAlert(`${parsed.length.toLocaleString()} filas cargadas.`);
+      const msg = `${parsed.length.toLocaleString()} filas cargadas y guardadas.`;
+      if (parsed.length > 5000) showAlert(`${msg} (Más de 5000 registros — puede afectar el rendimiento al guardar.)`, 'warning');
+      else showAlert(msg);
       renderHistorico(content, db, ccfg);
     };
     reader.readAsText(file, 'windows-1252');
@@ -408,6 +417,7 @@ function renderHistorico(content, db, ccfg) {
     if (!confirm('¿Vaciar datos en memoria?')) return;
     histData = []; histPage = 0; oficinaToGrupo = {};
     ccfg.histMeta = { uploadDate: null, rowCount: 0, fileName: '' };
+    ccfg.historico = [];
     saveDatabase(db); renderHistorico(content, db, ccfg);
   });
   document.getElementById('hist-fg')?.addEventListener('change', (e) => { histFilterGrupo  = e.target.value; histPage = 0; renderHistorico(content, db, ccfg); });
