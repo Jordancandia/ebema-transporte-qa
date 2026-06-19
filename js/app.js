@@ -1,4 +1,4 @@
-import { getDatabase, saveDatabase, initDatabase } from './data.js';
+import { getDatabase, saveDatabase, initDatabase, limpiarDatosMaestros } from './data.js';
 import { supabase } from './supabase-client.js';
 import { renderTransportsView } from './transports.js';
 import { renderRoutesView } from './routes.js';
@@ -1052,3 +1052,6 @@ function switchTab(tabName) {
       break;
   }
 }
+
+// Exponer utilidad de limpieza en consola
+window.limpiarDatosMaestros = limpiarDatosMaestros;

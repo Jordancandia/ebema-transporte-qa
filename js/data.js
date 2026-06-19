@@ -876,4 +876,19 @@ export function resetDatabase() {
   window.dispatchEvent(new Event('db_updated'));
   return defaultData;
 }
+
+// Limpiar datos maestros de prueba (rutas, zonas, transportistas)
+// sin afectar centros logísticos, tipos de camión ni configuraciones.
+export function limpiarDatosMaestros() {
+  const db = getDatabase();
+  db.routes = [];
+  db.transportZones = [];
+  db.transports = [];
+  db.transportsCamiones = [];
+  db.transportsChoferes = [];
+  db.routeTolls = [];
+  saveDatabase(db);
+  console.log('✓ Datos maestros limpiados: rutas, zonas, transportistas.');
+  return db;
+}
 // fin de data.js
