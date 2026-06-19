@@ -151,6 +151,11 @@ export function renderTroncalesView(container) {
   render();
 }
 
+function cerrarModal(el) {
+  el.classList.remove('active');
+  setTimeout(() => el.remove(), 300);
+}
+
 function abrirModal(troncal, grupos, db, onSave) {
   const esNuevo = !troncal;
   const t = troncal || { id: generarId(), razonSocial: '', rut: '', activo: true, camiones: [], rutasCobertura: [] };
@@ -158,23 +163,27 @@ function abrirModal(troncal, grupos, db, onSave) {
   const centrosOrigen = grupos.map(g => ({ value: g.grupo, label: g.nombre }));
 
   const el = document.createElement('div');
-  el.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md';
+  el.className = 'modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-300';
   el.innerHTML = `
-    <div class="bg-white rounded-lg shadow-xl p-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-      <div class="flex items-center gap-sm mb-md">
-        <span class="material-symbols-outlined text-primary">sync_alt</span>
-        <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface">${esNuevo ? 'Nuevo' : 'Editar'} Troncal</h3>
+    <div class="modal-window w-[600px] max-w-[90vw] bg-white border border-outline-variant shadow-lg rounded-xl overflow-hidden transform scale-95 transition-transform duration-300">
+      <div class="p-md border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+        <h4 class="font-headline-sm text-headline-sm font-bold text-on-surface flex items-center gap-sm">
+          <span class="material-symbols-outlined text-primary">sync_alt</span>
+          ${esNuevo ? 'Nuevo Troncal' : 'Editar Troncal'}
+        </h4>
+        <button class="text-secondary hover:text-primary cursor-pointer" id="t-cerrar">
+          <span class="material-symbols-outlined text-[24px]">close</span>
+        </button>
       </div>
-
-      <div class="space-y-md">
-        <div class="grid grid-cols-2 gap-md">
+      <div class="p-lg space-y-md max-h-[70vh] overflow-y-auto">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-md">
           <div class="space-y-xs">
-            <label class="font-label-caps text-label-caps text-secondary block">RAZÓN SOCIAL</label>
-            <input id="t-razon" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded" value="${escapeHtml(t.razonSocial || '')}">
+            <label for="t-razon" class="font-label-caps text-label-caps text-secondary block">RAZÓN SOCIAL</label>
+            <input id="t-razon" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary focus:ring-0 transition-all rounded bg-white" placeholder="Ej. Transportes Troncal Express" value="${escapeHtml(t.razonSocial || '')}">
           </div>
           <div class="space-y-xs">
-            <label class="font-label-caps text-label-caps text-secondary block">RUT</label>
-            <input id="t-rut" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded" value="${escapeHtml(t.rut || '')}">
+            <label for="t-rut" class="font-label-caps text-label-caps text-secondary block">RUT</label>
+            <input id="t-rut" type="text" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary focus:ring-0 transition-all rounded bg-white" placeholder="Ej: 76.849.201-3" value="${escapeHtml(t.rut || '')}">
           </div>
         </div>
 
@@ -203,20 +212,27 @@ function abrirModal(troncal, grupos, db, onSave) {
         </div>
 
         <div class="flex items-center gap-sm">
-          <input type="checkbox" id="t-activo" ${t.activo !== false ? 'checked' : ''}>
+          <input type="checkbox" id="t-activo" ${t.activo !== false ? 'checked' : ''} class="w-4 h-4 text-primary border-outline-variant rounded focus:ring-primary">
           <label for="t-activo" class="font-body-md text-body-md">Activo</label>
         </div>
       </div>
-
-      <div class="flex justify-end gap-sm mt-lg pt-md border-t border-outline-variant">
-        <button id="t-cancel" class="bg-surface-container-high hover:bg-surface-container text-on-surface font-bold px-md py-sm rounded text-[12px] uppercase cursor-pointer">Cancelar</button>
-        <button id="t-save" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded text-[12px] uppercase cursor-pointer">${esNuevo ? 'Crear' : 'Guardar'}</button>
+      <div class="p-md border-t border-outline-variant bg-surface-container-low flex justify-end gap-sm">
+        <button id="t-cancel" class="border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded cursor-pointer text-xs uppercase">Cancelar</button>
+        <button id="t-save" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded cursor-pointer text-xs uppercase shadow">${esNuevo ? 'Crear Troncal' : 'Guardar Cambios'}</button>
       </div>
     </div>`;
 
   document.body.appendChild(el);
 
-  el.querySelector('#t-cancel').addEventListener('click', () => el.remove());
+  requestAnimationFrame(() => el.classList.add('active'));
+
+  const cerrar = () => cerrarModal(el);
+
+  el.querySelector('#t-cerrar').addEventListener('click', cerrar);
+  el.querySelector('#t-cancel').addEventListener('click', cerrar);
+  el.addEventListener('click', (e) => {
+    if (e.target === el) cerrar();
+  });
 
   el.querySelector('#t-add-ruta').addEventListener('click', () => {
     const container = el.querySelector('#t-rutas-container');
@@ -269,7 +285,7 @@ function abrirModal(troncal, grupos, db, onSave) {
     }
 
     saveDatabase(db);
-    el.remove();
+    cerrar();
     showAlert(esNuevo ? 'Troncal creado.' : 'Troncal actualizado.');
     onSave();
   });
@@ -283,9 +299,9 @@ function rutaRow(r, idx, centros) {
     `<option value="${c.value}" ${r.destino === c.value ? 'selected' : ''}>${c.label}</option>`
   ).join('');
   return `<div class="ruta-row flex gap-sm items-center">
-    <select class="ruta-origen border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40">${opts}</select>
+    <select class="ruta-origen border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40 focus:border-primary focus:ring-0 transition-all">${opts}</select>
     <span class="text-secondary">→</span>
-    <select class="ruta-destino border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40">${optsD}</select>
+    <select class="ruta-destino border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40 focus:border-primary focus:ring-0 transition-all">${optsD}</select>
     <button type="button" class="ruta-remove text-red-600 hover:text-red-800 cursor-pointer" title="Eliminar ruta">
       <span class="material-symbols-outlined text-[18px]">remove_circle</span>
     </button>
@@ -297,10 +313,10 @@ function camionRow(c, idx) {
     `<option value="${cap}" ${String(c.capacidad) === cap ? 'selected' : ''}>${cap} Ton</option>`
   ).join('');
   return `<div class="camion-row flex gap-sm items-center">
-    <input type="text" class="cam-patente border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28" placeholder="Patente" value="${escapeHtml(c.patente || '')}">
-    <input type="text" class="cam-modelo border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40" placeholder="Modelo" value="${escapeHtml(c.modelo || '')}">
-    <select class="cam-capacidad border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28">${caps}</select>
-    <select class="cam-ejes border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-24">
+    <input type="text" class="cam-patente border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28 focus:border-primary focus:ring-0 transition-all" placeholder="Patente" value="${escapeHtml(c.patente || '')}">
+    <input type="text" class="cam-modelo border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-40 focus:border-primary focus:ring-0 transition-all" placeholder="Modelo" value="${escapeHtml(c.modelo || '')}">
+    <select class="cam-capacidad border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-28 focus:border-primary focus:ring-0 transition-all">${caps}</select>
+    <select class="cam-ejes border border-[#CED4DA] p-sm font-body-md text-body-md bg-white rounded w-24 focus:border-primary focus:ring-0 transition-all">
       <option value="2" ${c.ejes === 2 ? 'selected' : ''}>2 Ejes</option>
       <option value="3" ${c.ejes === 3 ? 'selected' : ''}>3 Ejes</option>
     </select>
