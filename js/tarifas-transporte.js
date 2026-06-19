@@ -1482,6 +1482,15 @@ function syncTarifasZcap(db, cfg, grupoFiltro = '') {
         t.ratePerKm = ratePerKm;
         cambios = true;
       }
+      const itemsExtrema = items.filter(m => m.ruta && m.ruta.caracteristica && m.ruta.caracteristica !== 'NORMAL');
+      if (itemsExtrema.length > 0) {
+        const avgExtrema = itemsExtrema.reduce((s, m) => s + m.item11_costoKmFinal, 0) / itemsExtrema.length;
+        const ratePerKmExtrema = Math.round(avgExtrema * (1 + margenPct / 100));
+        if (t.ratePerKmExtrema !== ratePerKmExtrema) {
+          t.ratePerKmExtrema = ratePerKmExtrema;
+          cambios = true;
+        }
+      }
     });
   });
 
@@ -1560,7 +1569,7 @@ function renderTarifasCamion(content, db, cfg) {
                     <td class="p-md w-28">${truckNumInput(t.id, 'Kmbase', t.Kmbase)}</td>
                     <td class="p-md w-32">${truckNumInput(t.id, 'baseKM', t.baseKM)}</td>
                     <td class="p-md w-32">${truckNumInput(t.id, 'baseRate', t.baseRate)}</td>
-                    ${tieneExtrema ? `<td class="p-md w-32">${truckNumInput(t.id, 'ratePerKmExtrema', t.ratePerKmExtrema || 0)}</td>` : ''}
+                    ${tieneExtrema ? `<td class="p-md w-28 text-right font-data-mono">${formatCLP(t.ratePerKmExtrema || 0)}</td>` : ''}
                     <td class="p-md w-28 text-right font-data-mono">${formatCLP(t.ratePerKm)}${conZcap.has(t.id) ? '' : `<div class="text-[11px] text-secondary normal-case">Sin rutas activas</div>`}</td>
                   </tr>`).join('')}
               </tbody>
