@@ -378,6 +378,7 @@ function renderRutasSubview(container) {
                     <th class="p-sm">Origen</th>
                     <th class="p-sm">Zona / Destino</th>
                     <th class="p-sm">KM</th>
+                    <th class="p-sm">Característica</th>
                     <th class="p-sm">Estado</th>
                   </tr>
                 </thead>
@@ -793,6 +794,10 @@ function renderRutasSubview(container) {
         const factorRutaNum = factorRutaRaw !== '' && factorRutaRaw !== undefined ? Number(factorRutaRaw) : 0;
         const factorRutaMap = { 1: 'NORMAL', 2: 'ISLA', 3: 'EXTREMA' };
         const factorRutaCsv = factorRutaMap[factorRutaNum] || (['NORMAL', 'ISLA', 'EXTREMA'].includes(factorRutaRaw?.toUpperCase()) ? factorRutaRaw.toUpperCase() : '');
+        const caracRaw = getField(row, 'caracteristica', 'característica');
+        const caracNum = caracRaw !== '' && caracRaw !== undefined ? Number(caracRaw) : 0;
+        const caracMap = { 1: 'NORMAL', 2: 'ISLA', 3: 'EXTREMA' };
+        const caracteristicaCsv = caracMap[caracNum] || (['NORMAL', 'ISLA', 'EXTREMA'].includes(caracRaw?.toUpperCase()) ? caracRaw.toUpperCase() : '') || factorRutaCsv || '';
         const latRaw = getField(row, 'latitud', 'lat');
         const lonRaw = getField(row, 'longitud', 'lon');
         const latCsv = (latRaw !== '' && latRaw !== undefined) ? Number(latRaw) : null;
@@ -840,6 +845,7 @@ function renderRutasSubview(container) {
           <td class="p-sm">${escapeHtml(origenValido || origenCsv)}</td>
           <td class="p-sm">${escapeHtml(idZona)} / ${escapeHtml(destinoCsv)}</td>
           <td class="p-sm font-bold">${kmCsv !== null && !isNaN(kmCsv) ? kmCsv + ' KM' : '—'}</td>
+          <td class="p-sm">${caracteristicaCsv ? `<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${caracteristicaCsv === 'NORMAL' ? 'bg-gray-100 text-gray-700' : caracteristicaCsv === 'ISLA' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}">${caracteristicaCsv}</span>` : '<span class="text-secondary">—</span>'}</td>
           <td class="p-sm">
             <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${error ? 'bg-red-100 text-red-800' : (incompleto ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800')}">
               ${error ? error : (incompleto ? 'Completar Datos' : 'Listo')}
@@ -886,7 +892,7 @@ function renderRutasSubview(container) {
             tipo: clasifNorm,
             km: (kmCsv !== null && !isNaN(kmCsv)) ? kmCsv : 0,
             estado_erp,
-            caracteristica: factorRutaCsv || 'NORMAL',
+            caracteristica: caracteristicaCsv || 'NORMAL',
             lat: georefCsv ? georefCsv.lat : null,
             lon: georefCsv ? georefCsv.lon : null,
             georef_estado: georefEstado,
