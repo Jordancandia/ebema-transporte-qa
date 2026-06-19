@@ -165,6 +165,10 @@ function renderRutasSubview(container) {
             <span class="material-symbols-outlined text-[18px]">my_location</span>
             Georreferenciar Rutas
           </button>
+          <button id="btn-geo-pendientes" class="flex-1 md:flex-none border border-amber-500 text-amber-700 hover:bg-amber-50 font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
+            <span class="material-symbols-outlined text-[18px]">auto_fix_high</span>
+            Georreferenciar Pendientes
+          </button>
           <button id="btn-bulk-upload-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">upload_file</span>
             Carga Masiva (CSV)
@@ -1030,6 +1034,36 @@ function renderRutasSubview(container) {
     if (done > 0) {
       showAlert(`Georreferenciación ${geoCancelled ? 'detenida' : 'finalizada'}: ${ok} ubicadas automáticamente, ${manual} requieren revisión manual.`);
     }
+  });
+
+  // Botón "Georreferenciar Pendientes" — procesa directamente todas las rutas sin georef
+  document.getElementById('btn-geo-pendientes')?.addEventListener('click', async () => {
+    const activeDb = getDatabase();
+    const pending = activeDb.routes.filter(r => !r.georef_estado);
+    if (pending.length === 0) { showAlert('No hay rutas pendientes de georreferenciación.', 'error'); return; }
+    if (!confirm(`¿Georreferenciar ${pending.length} rutas pendientes? Se procesarán una por una con ~1s de espera entre cada una.`)) return;
+
+    let done = 0, ok = 0, manual = 0;
+    showAlert(`Procesando ${pending.length} rutas...`, 'info');
+
+    for (const r of pending) {
+      const query = [r.destino, r.comuna, r.region].filter(Boolean).join(', ');
+      try {
+        const coords = await geocodeAddress(query);
+        r.lat = coords.lat;
+        r.lon = coords.lon;
+        r.georef_estado = !!coords.found;
+        if (coords.found) ok++; else manual++;
+      } catch { manual++; }
+      done++;
+      if (done % 10 === 0) saveDatabase(activeDb);
+      if (!geoCancelled) await new Promise(resolve => setTimeout(resolve, 1100));
+    }
+
+    saveDatabase(activeDb);
+    const db2 = getDatabase();
+    renderRoutesTable(db2.routes);
+    showAlert(`Finalizado: ${ok} ubicadas automáticamente, ${manual} requieren revisión manual.`);
   });
 
   // Función auxiliar para abrir el modal en modo edición (usada por la tabla)
