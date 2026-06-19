@@ -169,6 +169,10 @@ function renderRutasSubview(container) {
             <span class="material-symbols-outlined text-[18px]">auto_fix_high</span>
             Georreferenciar Pendientes
           </button>
+          <button id="btn-calcular-km-rutas" class="flex-1 md:flex-none border border-sky-500 text-sky-700 hover:bg-sky-50 font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
+            <span class="material-symbols-outlined text-[18px]">straighten</span>
+            Calcular KM
+          </button>
           <button id="btn-bulk-upload-routes" class="flex-1 md:flex-none border border-secondary text-secondary hover:bg-surface-container-high font-bold px-md py-sm rounded active:scale-[0.98] transition-all flex items-center justify-center gap-sm cursor-pointer text-xs uppercase tracking-wider">
             <span class="material-symbols-outlined text-[18px]">upload_file</span>
             Carga Masiva (CSV)
@@ -1064,6 +1068,39 @@ function renderRutasSubview(container) {
     const db2 = getDatabase();
     renderRoutesTable(db2.routes);
     showAlert(`Finalizado: ${ok} ubicadas automáticamente, ${manual} requieren revisión manual.`);
+  });
+
+  // Botón "Calcular KM" — calcula distancia por OSRM para rutas sin km
+  document.getElementById('btn-calcular-km-rutas')?.addEventListener('click', async () => {
+    const activeDb = getDatabase();
+    const pendientes = activeDb.routes.filter(r => !r.km || r.km === 0);
+    if (pendientes.length === 0) { showAlert('Todas las rutas ya tienen KM calculado.', 'error'); return; }
+    if (!confirm(`¿Calcular KM para ${pendientes.length} rutas? Se geolocalizará cada destino y consultará OSRM (~1.5s por ruta).`)) return;
+
+    let done = 0, ok = 0, errors = 0;
+    showAlert(`Calculando KM para ${pendientes.length} rutas...`, 'info');
+
+    for (const r of pendientes) {
+      try {
+        const cd = activeDb.logisticsCentres.find(c => c.id === r.origenId);
+        if (!cd || !cd.lat || !cd.lon) { errors++; continue; }
+        const destinoTexto = [r.destino, r.comuna, r.region].filter(Boolean).join(', ');
+        const result = await calcularDistanciaAuto(cd, destinoTexto);
+        r.km = result.km;
+        if (!r.lat) r.lat = result.lat;
+        if (!r.lon) r.lon = result.lon;
+        if (!r.georef_estado) r.georef_estado = true;
+        ok++;
+      } catch { errors++; }
+      done++;
+      if (done % 10 === 0) saveDatabase(activeDb);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+
+    saveDatabase(activeDb);
+    const db2 = getDatabase();
+    renderRoutesTable(db2.routes);
+    showAlert(`Finalizado: ${ok} KM calculados, ${errors} con errores.`);
   });
 
   // Función auxiliar para abrir el modal en modo edición (usada por la tabla)

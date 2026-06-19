@@ -295,9 +295,6 @@ function renderPeajesAuto(content, db, cfg) {
           <span class="material-symbols-outlined text-[18px]">upload</span> Importar Cache API
         </button>
         <input type="file" id="pj-import-cache-input" accept=".csv" class="hidden">
-        <button id="pj-calcular-km" class="bg-secondary hover:bg-[#4a5568] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
-          <span class="material-symbols-outlined text-[18px]">straighten</span> Calcular KM
-        </button>
         <button id="pj-calcular" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
           <span class="material-symbols-outlined text-[18px]">calculate</span> Calcular Peajes
         </button>
@@ -327,7 +324,7 @@ function renderPeajesAuto(content, db, cfg) {
               displayRows.map(({ ruta, ejes, toll }) => {
                 const grupo = grupos.find(g => g.centroIds.includes(ruta.origenId));
                 const origenNombre = grupo ? grupo.nombre : (getCentreName(db, ruta.origenId) || '');
-                const kmTotal = toll && toll.km_ida != null ? toll.km_ida.toFixed(1) : '—';
+                const kmTotal = ruta.km != null ? ruta.km.toFixed(1) + ' KM' : '—';
                 let estado;
                 if (!toll || !toll.calculado_en) {
                   estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN CALCULAR</span>`;
@@ -410,18 +407,6 @@ function renderPeajesAuto(content, db, cfg) {
   // Select-all checkbox
   document.getElementById('pj-check-all').addEventListener('change', (e) => {
     content.querySelectorAll('.pj-row-check').forEach(cb => { cb.checked = e.target.checked; });
-  });
-
-  // Calcular KM: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
-  document.getElementById('pj-calcular-km').addEventListener('click', () => {
-    const checked = [...content.querySelectorAll('.pj-row-check:checked')].map(cb => cb.dataset.routeId);
-    let rutasTarget;
-    if (checked.length > 0) {
-      rutasTarget = [...new Set(checked)].map(id => routes.find(r => r.id === id)).filter(Boolean);
-    } else {
-      rutasTarget = [...new Set(rows.map(r => r.ruta))];
-    }
-    calcularKm(content, db, cfg, rutasTarget);
   });
 
   // Calcular Peajes: solo rutas seleccionadas, o todas las filtradas si ninguna seleccionada
@@ -561,9 +546,6 @@ function renderPeajesInterregionales(content, db, cfg) {
           <span class="material-symbols-outlined text-[18px]">upload</span> Importar Cache API
         </button>
         <input type="file" id="pji-import-cache-input" accept=".csv" class="hidden">
-        <button id="pji-calcular-km" class="bg-secondary hover:bg-[#4a5568] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
-          <span class="material-symbols-outlined text-[18px]">straighten</span> Calcular KM
-        </button>
         <button id="pji-calcular" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
           <span class="material-symbols-outlined text-[18px]">calculate</span> Calcular Peajes
         </button>
@@ -593,7 +575,7 @@ function renderPeajesInterregionales(content, db, cfg) {
               displayRows.map(({ ruta, ejes, toll }) => {
                 const grupo = grupos.find(g => g.centroIds.includes(ruta.origenId));
                 const origenNombre = grupo ? grupo.nombre : (getCentreName(db, ruta.origenId) || '');
-                const kmTotal = toll && toll.km_ida != null ? toll.km_ida.toFixed(1) : '—';
+                const kmTotal = ruta.km != null ? ruta.km.toFixed(1) + ' KM' : '—';
                 let estado;
                 if (!toll || !toll.calculado_en) {
                   estado = `<span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[10px]">SIN CALCULAR</span>`;
@@ -663,17 +645,6 @@ function renderPeajesInterregionales(content, db, cfg) {
 
   document.getElementById('pji-check-all').addEventListener('change', (e) => {
     content.querySelectorAll('.pji-row-check').forEach(cb => { cb.checked = e.target.checked; });
-  });
-
-  document.getElementById('pji-calcular-km').addEventListener('click', () => {
-    const checked = [...content.querySelectorAll('.pji-row-check:checked')].map(cb => cb.dataset.routeId);
-    let rutasTarget;
-    if (checked.length > 0) {
-      rutasTarget = [...new Set(checked)].map(id => routes.find(r => r.id === id)).filter(Boolean);
-    } else {
-      rutasTarget = [...new Set(rows.map(r => r.ruta))];
-    }
-    calcularKm(content, db, cfg, rutasTarget);
   });
 
   document.getElementById('pji-calcular').addEventListener('click', () => {
