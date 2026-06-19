@@ -945,6 +945,10 @@ function renderDashboardShell() {
       </div>
 
       <div class="mt-auto space-y-base border-t border-surface-variant pt-lg">
+        <a class="flex items-center gap-md px-md py-sm text-danger hover:text-error hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer text-[13px]" id="btn-limpiar" title="Borra rutas, zonas y transportistas (mantiene centros y config)">
+          <span class="material-symbols-outlined text-[18px]">cleaning_services</span>
+          <span class="font-body-md text-body-md">Limpiar datos prueba</span>
+        </a>
         <a class="flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" id="btn-logout">
           <span class="material-symbols-outlined">logout</span>
           <span class="font-body-md text-body-md">Logout</span>
@@ -995,6 +999,14 @@ function renderDashboardShell() {
 
   // Cerrar Sesión (también en el servidor)
   document.getElementById('btn-logout').addEventListener('click', handleLogout);
+
+  // Limpiar datos maestros de prueba
+  document.getElementById('btn-limpiar')?.addEventListener('click', () => {
+    if (!confirm('¿Borrar todas las rutas, zonas de transporte y transportistas?\nEsta acción no se puede deshacer.')) return;
+    if (!confirm('¿Estás seguro? Se eliminarán todos los datos maestros cargados.')) return;
+    limpiarDatosMaestros();
+    showAlert('Datos maestros limpiados correctamente.', 'success');
+  });
 
   // Enrutamiento de pestañas del Sidebar
   document.querySelectorAll('.sidebar-item').forEach(item => {
