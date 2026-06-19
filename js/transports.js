@@ -1,8 +1,10 @@
 import { getDatabase, saveDatabase, calcEjes } from './data.js';
 import { formatRut, validateRut, generateSapCode, parseCSV, showAlert, escapeHtml } from './utils.js';
 import { renderFichaTransporte } from './ficha-transporte.js';
+import { renderTroncalesView } from './troncales.js';
 
 let editingTransportId = null;
+let activeTransportSubTab = 'transportistas';
 
 // Suma la capacidad (Tons) de los camiones de los transportistas activos,
 // opcionalmente filtrado por centro logístico (centrosServicio)
@@ -13,6 +15,7 @@ function computeFleetCapacity(transports, centroId) {
 }
 
 export function renderTransportsView(container) {
+  console.log('renderTransportsView - version con sub-tabs', activeTransportSubTab);
   const db = getDatabase();
   const transports = db.transports;
   const cds = db.logisticsCentres;
@@ -30,6 +33,19 @@ export function renderTransportsView(container) {
       <p class="font-body-lg text-body-lg text-secondary">Configure y controle las empresas transportistas, su capacidad en toneladas, contacto corporativo y estado operativo.</p>
     </div>
 
+    <!-- Sub-tab navigation -->
+    <div class="flex gap-sm mb-xl border-b border-outline-variant pb-sm">
+      <button class="transports-subtab flex items-center gap-xs px-md py-sm rounded-t-lg font-bold text-xs uppercase tracking-wide transition-all cursor-pointer ${activeTransportSubTab === 'transportistas' ? 'bg-primary text-white shadow-sm' : 'bg-surface-container-high text-secondary hover:bg-surface-container'}" data-subtab="transportistas">
+        <span class="material-symbols-outlined text-[18px]">commute</span>
+        Transportistas
+      </button>
+      <button class="transports-subtab flex items-center gap-xs px-md py-sm rounded-t-lg font-bold text-xs uppercase tracking-wide transition-all cursor-pointer ${activeTransportSubTab === 'troncales' ? 'bg-primary text-white shadow-sm' : 'bg-surface-container-high text-secondary hover:bg-surface-container'}" data-subtab="troncales">
+        <span class="material-symbols-outlined text-[18px]">sync_alt</span>
+        Troncales
+      </button>
+    </div>
+
+    <div id="transportistas-section" class="${activeTransportSubTab === 'transportistas' ? '' : 'hidden'}">
     <!-- Tarjetas de Estadísticas KPI -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-lg mb-xl">
       <div class="bg-surface border border-outline-variant p-md shadow-sm rounded flex items-center justify-between">
@@ -230,6 +246,11 @@ export function renderTransportsView(container) {
           <button class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" id="btn-confirm-bulk" disabled>Importar registros</button>
         </div>
       </div>
+    </div>
+    </div><!-- end transportistas-section -->
+
+    <div id="troncales-section" class="${activeTransportSubTab === 'troncales' ? '' : 'hidden'}">
+      <div id="troncales-content"></div>
     </div>
   `;
 
@@ -509,6 +530,19 @@ export function renderTransportsView(container) {
     closeBulkModal();
     renderTransportsView(container);
   });
+
+  // --- SUB-TAB SWITCHING ---
+  container.querySelectorAll('.transports-subtab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeTransportSubTab = btn.dataset.subtab;
+      renderTransportsView(container);
+    });
+  });
+
+  // Renderizar Troncales si es la sub-tab activa
+  if (activeTransportSubTab === 'troncales') {
+    renderTroncalesView(document.getElementById('troncales-content'));
+  }
 }
 
 function setLockFields(isEdit) {

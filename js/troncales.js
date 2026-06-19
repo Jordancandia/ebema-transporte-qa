@@ -29,6 +29,11 @@ export function renderTroncalesView(container) {
         || (t.rut || '').toLowerCase().includes(q);
     });
 
+    const totalTroncales = filtered.length;
+    const activeTroncales = filtered.filter(t => t.activo !== false).length;
+    const totalCamiones = filtered.reduce((sum, t) => sum + (t.camiones || []).length, 0);
+    const totalCapacidad = filtered.reduce((sum, t) => sum + (t.camiones || []).reduce((a, c) => a + Number(c.capacidad || 0), 0), 0);
+
     container.innerHTML = `
       <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm rounded-lg">
         <div class="flex items-center justify-between mb-md border-b border-outline-variant pb-sm">
@@ -41,6 +46,38 @@ export function renderTroncalesView(container) {
             <button id="tr-nuevo" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
               <span class="material-symbols-outlined text-[18px]">add</span> Nuevo Troncal
             </button>
+          </div>
+        </div>
+
+        <!-- Tarjetas de Estadísticas KPI -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-lg mb-xl">
+          <div class="bg-surface border border-outline-variant p-md shadow-sm rounded flex items-center justify-between">
+            <div>
+              <h4 class="font-label-caps text-label-caps text-secondary uppercase">Total Troncales</h4>
+              <div class="font-headline-md text-headline-md font-bold text-on-surface mt-1">${totalTroncales}</div>
+            </div>
+            <span class="material-symbols-outlined text-[32px] text-secondary">sync_alt</span>
+          </div>
+          <div class="bg-surface border border-outline-variant p-md shadow-sm rounded flex items-center justify-between">
+            <div>
+              <h4 class="font-label-caps text-label-caps text-secondary uppercase">Activos</h4>
+              <div class="font-headline-md text-headline-md font-bold text-green-700 mt-1">${activeTroncales}</div>
+            </div>
+            <span class="material-symbols-outlined text-[32px] text-green-600">check_circle</span>
+          </div>
+          <div class="bg-surface border border-outline-variant p-md shadow-sm rounded border-l-4 border-primary flex items-center justify-between">
+            <div>
+              <h4 class="font-label-caps text-label-caps text-secondary uppercase">Total Camiones</h4>
+              <div class="font-headline-md text-headline-md font-bold text-primary mt-1">${totalCamiones}</div>
+            </div>
+            <span class="material-symbols-outlined text-[32px] text-primary">local_shipping</span>
+          </div>
+          <div class="bg-surface border border-outline-variant p-md shadow-sm rounded flex items-center justify-between">
+            <div>
+              <h4 class="font-label-caps text-label-caps text-secondary uppercase">Capacidad Flota</h4>
+              <div class="font-headline-md text-headline-md font-bold text-red-600 mt-1">${totalCapacidad} Ton</div>
+            </div>
+            <span class="material-symbols-outlined text-[32px] text-red-500">analytics</span>
           </div>
         </div>
 
