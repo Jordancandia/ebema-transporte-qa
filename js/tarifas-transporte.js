@@ -162,6 +162,304 @@ export function renderTariffTransportView(container) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COSTOS EXTRAS — ítems adicionales por ruta y tipo de eje (BARCAZA, TRAVESÍA…)
+// Se suman al motor ZCAP como ítem 1b, con ida y vuelta separados.
+// ─────────────────────────────────────────────────────────────────────────────
+const CE_ITEMS_SUGERIDOS = ['BARCAZA', 'TRAVESÍA', 'ACARREO', 'PEAJE ESPECIAL', 'PERNOCTE', 'ESCOLTA', 'DESCARRILAMIENTO', 'FLETE ESPECIAL'];
+const CE_EJES_LABELS = { 2: '2 Ejes (5 y 10 Ton)', 3: '3 Ejes (15 y 28 Ton)' };
+
+function renderCostosExtras(content, db, cfg) {
+  const grupos      = getOrigenGroups(db);
+  const routes      = (db.routes || []).filter(r => r.activo);
+  db.extraCosts     = db.extraCosts || [];
+
+  // ── Filtros ──
+  let ceFiltroCentro = window._ceFiltroCentro || '';
+  let ceFiltroRuta   = window._ceFiltroRuta   || '';
+  let ceFiltroEjes   = window._ceFiltroEjes   || '';
+
+  function getRows() {
+    let rows = db.extraCosts.filter(c => c.activo !== false);
+    if (ceFiltroCentro) {
+      const g = grupos.find(g => g.grupo === ceFiltroCentro);
+      const ids = g ? g.centroIds : [];
+      const rutasGrupo = routes.filter(r => ids.includes(r.origenId)).map(r => r.id);
+      rows = rows.filter(c => rutasGrupo.includes(c.route_id));
+    }
+    if (ceFiltroRuta)  rows = rows.filter(c => c.route_id === ceFiltroRuta);
+    if (ceFiltroEjes)  rows = rows.filter(c => Number(c.ejes) === Number(ceFiltroEjes));
+    return rows;
+  }
+
+  function rerender() {
+    window._ceFiltroCentro = ceFiltroCentro;
+    window._ceFiltroRuta   = ceFiltroRuta;
+    window._ceFiltroEjes   = ceFiltroEjes;
+    renderCostosExtras(content, db, cfg);
+  }
+
+  const rows = getRows();
+  const totalExtras = db.extraCosts.filter(c => c.activo !== false).length;
+  const totalRutas  = [...new Set(db.extraCosts.filter(c => c.activo !== false).map(c => c.route_id))].length;
+  const sumaTotal   = rows.reduce((s, c) => s + (Number(c.costo_ida) || 0) + (Number(c.costo_vuelta) || 0), 0);
+
+  const centrosOrigen = grupos.map(g => ({ id: g.grupo, nombre: g.nombre }));
+  const rutasFiltradas = ceFiltroCentro
+    ? routes.filter(r => {
+        const g = grupos.find(g => g.grupo === ceFiltroCentro);
+        return g && g.centroIds.includes(r.origenId);
+      })
+    : routes;
+
+  content.innerHTML = `
+    <datalist id="ce-items-list">
+      ${CE_ITEMS_SUGERIDOS.map(i => `<option value="${escapeHtml(i)}">`).join('')}
+    </datalist>
+
+    <div class="bg-surface-container-lowest border border-outline-variant p-lg shadow-sm mb-lg">
+      <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
+        <span class="material-symbols-outlined text-primary">add_circle</span>
+        <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface">Costos Extras por Ruta</h2>
+      </div>
+      <p class="text-[12px] text-secondary mb-md">
+        Ítems de costo adicionales por ruta y tipo de eje (BARCAZA, TRAVESÍA, escolta, etc.).
+        Se suman al motor ZCAP como <b>ítem 1b</b> junto a peajes, con ida y vuelta independientes.
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-md mb-md">
+        <div class="bg-surface-container-low p-md rounded">
+          <p class="font-label-caps text-label-caps text-secondary">Ítems Registrados</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${totalExtras}</p>
+        </div>
+        <div class="bg-surface-container-low p-md rounded">
+          <p class="font-label-caps text-label-caps text-secondary">Rutas con Costos Extras</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-on-surface">${totalRutas}</p>
+        </div>
+        <div class="bg-surface-container-low p-md rounded">
+          <p class="font-label-caps text-label-caps text-secondary">Total Visible (Ida + Vuelta)</p>
+          <p class="font-headline-sm text-headline-sm font-bold text-primary">${formatCLP(sumaTotal)}</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-sm items-end mb-md">
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">CENTRO ORIGEN</label>
+          <select id="ce-f-centro" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48">
+            <option value="">Todos</option>
+            ${centrosOrigen.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === ceFiltroCentro ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">RUTA</label>
+          <select id="ce-f-ruta" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-48">
+            <option value="">Todas</option>
+            ${rutasFiltradas.map(r => `<option value="${escapeHtml(r.id)}" ${r.id === ceFiltroRuta ? 'selected' : ''}>${escapeHtml(r.codigo)} — ${escapeHtml(r.destino || '')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="space-y-xs">
+          <label class="font-label-caps text-label-caps text-secondary block">TIPO CAMIÓN</label>
+          <select id="ce-f-ejes" class="border border-[#CED4DA] p-sm font-body-md text-body-md bg-white w-44">
+            <option value="">Todos</option>
+            <option value="2" ${ceFiltroEjes === '2' ? 'selected' : ''}>2 Ejes (5 y 10 Ton)</option>
+            <option value="3" ${ceFiltroEjes === '3' ? 'selected' : ''}>3 Ejes (15 y 28 Ton)</option>
+          </select>
+        </div>
+        <div class="flex-1"></div>
+        <button id="ce-agregar" class="bg-primary hover:bg-[#930007] text-white font-bold px-md py-sm rounded flex items-center gap-xs text-[12px] uppercase">
+          <span class="material-symbols-outlined text-[18px]">add</span> Agregar Ítem
+        </button>
+      </div>
+
+      <div class="bg-surface border border-outline-variant overflow-hidden rounded overflow-x-auto">
+        <table class="w-full zebra-table border-collapse">
+          <thead>
+            <tr class="bg-surface-container-high text-left border-b border-outline-variant">
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ruta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Origen</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Destino</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Tipo Camión</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase">Ítem de Costo</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Ida</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Costo Vuelta</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-right">Total</th>
+              <th class="p-md font-label-caps text-label-caps text-secondary uppercase text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody class="font-body-md text-body-md">
+            ${rows.length === 0
+              ? `<tr><td colspan="9" class="p-md text-center text-secondary">No hay costos extras registrados. Usa "Agregar Ítem" para crear uno.</td></tr>`
+              : rows.map(ce => {
+                  const ruta   = routes.find(r => r.id === ce.route_id);
+                  const grupo  = ruta ? grupos.find(g => g.centroIds.includes(ruta.origenId)) : null;
+                  const origen = grupo ? grupo.nombre : '—';
+                  const destino = ruta ? (ruta.destino || ruta.denominacion || '—') : '(ruta eliminada)';
+                  const codigo  = ruta ? (ruta.codigo || '—') : '—';
+                  const total   = (Number(ce.costo_ida) || 0) + (Number(ce.costo_vuelta) || 0);
+                  return `<tr class="border-b border-outline-variant">
+                    <td class="p-md font-bold">${escapeHtml(codigo)}</td>
+                    <td class="p-md">${escapeHtml(origen)}</td>
+                    <td class="p-md">${escapeHtml(destino)}</td>
+                    <td class="p-md">${CE_EJES_LABELS[ce.ejes] || ce.ejes}</td>
+                    <td class="p-md">
+                      <span class="inline-flex items-center px-2 py-1 rounded bg-secondary-container text-on-secondary-container font-label-caps text-[11px]">
+                        ${escapeHtml(ce.item || '—')}
+                      </span>
+                    </td>
+                    <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(ce.costo_ida)}</td>
+                    <td class="p-md text-right font-data-mono text-data-mono">${formatCLP(ce.costo_vuelta)}</td>
+                    <td class="p-md text-right font-data-mono text-data-mono font-bold">${formatCLP(total)}</td>
+                    <td class="p-md text-center flex items-center justify-center gap-sm">
+                      <button class="ce-editar text-secondary hover:text-primary" data-ce-id="${escapeHtml(ce.id)}" title="Editar">
+                        <span class="material-symbols-outlined text-[18px]">edit</span>
+                      </button>
+                      <button class="ce-eliminar text-secondary hover:text-red-600" data-ce-id="${escapeHtml(ce.id)}" title="Eliminar">
+                        <span class="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  // Filtros
+  content.querySelector('#ce-f-centro')?.addEventListener('change', e => { ceFiltroCentro = e.target.value; ceFiltroRuta = ''; rerender(); });
+  content.querySelector('#ce-f-ruta')?.addEventListener('change',   e => { ceFiltroRuta   = e.target.value; rerender(); });
+  content.querySelector('#ce-f-ejes')?.addEventListener('change',   e => { ceFiltroEjes   = e.target.value; rerender(); });
+
+  // Agregar ítem
+  content.querySelector('#ce-agregar')?.addEventListener('click', () => abrirModalCE(null));
+
+  // Editar / Eliminar
+  content.querySelectorAll('.ce-editar').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ce = db.extraCosts.find(c => c.id === btn.dataset.ceId);
+      if (ce) abrirModalCE(ce);
+    });
+  });
+  content.querySelectorAll('.ce-eliminar').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('¿Eliminar este ítem de costo extra?')) return;
+      db.extraCosts = db.extraCosts.filter(c => c.id !== btn.dataset.ceId);
+      saveDatabase(db);
+      rerender();
+    });
+  });
+
+  // ── Modal agregar / editar ──────────────────────────────────────────────────
+  function abrirModalCE(ce) {
+    const esNuevo = !ce;
+    const el = document.createElement('div');
+    el.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md';
+    el.innerHTML = `
+      <div class="bg-white rounded-lg shadow-xl p-lg w-full max-w-lg">
+        <div class="flex items-center gap-sm mb-md border-b border-outline-variant pb-sm">
+          <span class="material-symbols-outlined text-primary">add_circle</span>
+          <h3 class="font-headline-sm text-headline-sm font-bold text-on-surface">${esNuevo ? 'Agregar Ítem de Costo Extra' : 'Editar Ítem de Costo Extra'}</h3>
+        </div>
+
+        <div class="space-y-md">
+          <div>
+            <label class="font-label-caps text-label-caps text-secondary block mb-xs">CENTRO ORIGEN</label>
+            <select id="ce-m-centro" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white">
+              <option value="">— Seleccionar —</option>
+              ${centrosOrigen.map(c => {
+                const sel = ce ? (routes.find(r => r.id === ce.route_id) && grupos.find(g => g.centroIds.includes(routes.find(r => r.id === ce.route_id)?.origenId))?.grupo === c.id) : false;
+                return `<option value="${escapeHtml(c.id)}" ${sel ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`;
+              }).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="font-label-caps text-label-caps text-secondary block mb-xs">RUTA</label>
+            <select id="ce-m-ruta" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white">
+              <option value="">— Seleccionar —</option>
+              ${routes.map(r => `<option value="${escapeHtml(r.id)}" ${ce && ce.route_id === r.id ? 'selected' : ''}>${escapeHtml(r.codigo)} — ${escapeHtml(r.destino || '')}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="font-label-caps text-label-caps text-secondary block mb-xs">TIPO DE CAMIÓN</label>
+            <select id="ce-m-ejes" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md bg-white">
+              <option value="2" ${!ce || Number(ce.ejes) === 2 ? 'selected' : ''}>2 Ejes — 5 Ton y 10 Ton</option>
+              <option value="3" ${ce && Number(ce.ejes) === 3 ? 'selected' : ''}>3 Ejes — 15 Ton y 28 Ton</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-label-caps text-label-caps text-secondary block mb-xs">ÍTEM DE COSTO</label>
+            <input id="ce-m-item" list="ce-items-list" type="text" placeholder="Ej: BARCAZA, TRAVESÍA…"
+              value="${escapeHtml(ce ? ce.item : '')}"
+              class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md">
+            <p class="text-[11px] text-secondary mt-xs">Puedes escribir cualquier etiqueta o elegir una sugerida.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-md">
+            <div>
+              <label class="font-label-caps text-label-caps text-secondary block mb-xs">COSTO IDA (CLP)</label>
+              <input id="ce-m-ida" type="number" min="0" step="1000"
+                value="${ce ? (ce.costo_ida || 0) : 0}"
+                class="w-full border border-[#CED4DA] p-sm font-data-mono text-data-mono">
+            </div>
+            <div>
+              <label class="font-label-caps text-label-caps text-secondary block mb-xs">COSTO VUELTA (CLP)</label>
+              <input id="ce-m-vuelta" type="number" min="0" step="1000"
+                value="${ce ? (ce.costo_vuelta || 0) : 0}"
+                class="w-full border border-[#CED4DA] p-sm font-data-mono text-data-mono">
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-sm mt-lg">
+          <button id="ce-m-cancel" class="px-md py-sm rounded border border-outline text-secondary font-bold text-[12px] uppercase">Cancelar</button>
+          <button id="ce-m-save" class="px-md py-sm rounded bg-primary text-white font-bold text-[12px] uppercase">Guardar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+
+    // Filtrar rutas al cambiar centro en el modal
+    el.querySelector('#ce-m-centro').addEventListener('change', e => {
+      const g    = grupos.find(g => g.grupo === e.target.value);
+      const ids  = g ? g.centroIds : [];
+      const sel  = el.querySelector('#ce-m-ruta');
+      sel.innerHTML = '<option value="">— Seleccionar —</option>' +
+        routes
+          .filter(r => !ids.length || ids.includes(r.origenId))
+          .map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.codigo)} — ${escapeHtml(r.destino || '')}</option>`)
+          .join('');
+    });
+
+    el.querySelector('#ce-m-cancel').addEventListener('click', () => el.remove());
+
+    el.querySelector('#ce-m-save').addEventListener('click', () => {
+      const routeId    = el.querySelector('#ce-m-ruta').value;
+      const ejes       = Number(el.querySelector('#ce-m-ejes').value);
+      const item       = el.querySelector('#ce-m-item').value.trim().toUpperCase();
+      const costo_ida  = Number(el.querySelector('#ce-m-ida').value)    || 0;
+      const costo_vuelta = Number(el.querySelector('#ce-m-vuelta').value) || 0;
+
+      if (!routeId) { alert('Selecciona una ruta.'); return; }
+      if (!item)    { alert('Ingresa un ítem de costo (ej: BARCAZA).'); return; }
+
+      const now = new Date().toISOString();
+      if (esNuevo) {
+        db.extraCosts.push({
+          id: `ce_${routeId}_${ejes}_${Date.now()}`,
+          route_id: routeId, ejes, item,
+          costo_ida, costo_vuelta, activo: true,
+          created_at: now, updated_at: now
+        });
+      } else {
+        Object.assign(ce, { route_id: routeId, ejes, item, costo_ida, costo_vuelta, updated_at: now });
+      }
+
+      saveDatabase(db);
+      el.remove();
+      rerender();
+    });
+  }
+}
+
 function subTabButton(key, icon, label) {
   return `<button class="tt-subtab flex items-center gap-xs px-md py-sm rounded-lg font-bold text-[12px] uppercase tracking-wide bg-surface-container-high text-secondary cursor-pointer whitespace-nowrap" data-sub="${key}">
     <span class="material-symbols-outlined text-[16px]">${icon}</span> ${label}
@@ -440,7 +738,8 @@ function renderPeajesAuto(content, db, cfg) {
   content.querySelectorAll('[data-calc-route]').forEach(btn => {
     btn.addEventListener('click', () => {
       const ruta = routes.find(r => r.id === btn.dataset.calcRoute);
-      if (ruta) calcularPeajes(content, db, cfg, [ruta]);
+      // force: true — el usuario pidió explícitamente recalcular esta ruta, ignorar caché
+      if (ruta) calcularPeajes(content, db, cfg, [ruta], { force: true });
     });
   });
 }
@@ -825,6 +1124,18 @@ async function callTollGuruTolls(originCity, destCity) {
   return data; // { total_2_ejes, total_3_ejes, distance_km, hasTolls, plazas, currency }
 }
 
+// Invoca la Edge Function 'getapi-tolls' (proxy hacia chile.getapi.cl).
+// category: 'CAMION_2_EJES' | 'CAMION_PESADO'
+// Respuesta: { tollCLP, mainlineCLP, rampCLP, electronicCLP, hasToll, tollsCount, tolls[], notFound? }
+async function callGetApiTolls(originCity, destCity, category) {
+  const { data, error } = await supabase.functions.invoke('getapi-tolls', {
+    body: { originCity, destCity, category }
+  });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data;
+}
+
 async function callGoogleDistance(originLat, originLng, destLat, destLng) {
   const { data, error } = await supabase.functions.invoke('google-distance', {
     body: { originLat, originLng, destLat, destLng }
@@ -1140,7 +1451,7 @@ function createProgressModal(total) {
 //   Fase 2 — TollGuru: solo para rutas donde Google confirmó peaje.
 // Rutas donde Google dice hasTolls=false → se registran con $0 sin tocar TollGuru.
 // Si Google falla en una ruta → esa ruta se envía igual a TollGuru (safe fallback).
-async function calcularPeajes(content, db, cfg, rutas) {
+async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
   if (!rutas || rutas.length === 0) {
     showAlert('No hay rutas para calcular con los filtros actuales', 'error');
     return;
@@ -1149,7 +1460,17 @@ async function calcularPeajes(content, db, cfg, rutas) {
   const sinCoords = rutas.length - targets.length;
   const avisoCoords = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán en revisión.` : '';
 
-  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) en 2 fases:\n\n1. Google Routes API detecta cuáles tienen peaje (todas las rutas, sin costo TollGuru).\n2. TollGuru calcula montos exactos solo para las rutas con peaje.${avisoCoords}\n\n¿Continuar?`)) {
+  // Contar rutas ya en caché válida (para informar al usuario en modo masivo)
+  const enCache = force ? 0 : targets.filter(r => {
+    const c2 = pjGetTollRow(db, r.id, 2);
+    const c3 = pjGetTollRow(db, r.id, 3);
+    return c2 && c3 && c2.calculado_en && c3.calculado_en && !c2.needs_review && !c3.needs_review;
+  }).length;
+  const avisoCache = !force && enCache > 0
+    ? `\n${enCache} ruta(s) ya tienen caché válida y serán omitidas.\nUsa el botón ↺ por fila para forzar actualización de una ruta específica.`
+    : '';
+
+  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) en 2 fases:\n\n1. Google Routes API detecta cuáles tienen peaje (todas las rutas, sin costo TollGuru).\n2. TollGuru calcula montos exactos solo para las rutas con peaje.${avisoCoords}${avisoCache}\n\n¿Continuar?`)) {
     return;
   }
 
@@ -1171,6 +1492,16 @@ async function calcularPeajes(content, db, cfg, rutas) {
   for (let i = 0; i < targets.length; i++) {
     if (cancelado) break;
     const ruta = targets[i];
+
+    // Caché: si ambos ejes tienen resultado válido y no requieren revisión, omitir (solo en modo masivo)
+    if (!force) {
+      const c2 = pjGetTollRow(db, ruta.id, 2);
+      const c3 = pjGetTollRow(db, ruta.id, 3);
+      if (c2 && c3 && c2.calculado_en && c3.calculado_en && !c2.needs_review && !c3.needs_review) {
+        continue; // hit de caché — omitir Google + TollGuru para esta ruta
+      }
+    }
+
     const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
     modal.update(i, targets.length, `[Google] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
 
@@ -1213,31 +1544,35 @@ async function calcularPeajes(content, db, cfg, rutas) {
 
   saveDatabase(db);
 
-  // ── FASE 2: TollGuru solo para rutas con peaje ────────────────────────────
+  // ── FASE 2: GetAPI solo para rutas donde Google confirmó peaje ──────────────
+  const ejesToCategory = { 2: 'CAMION_2_EJES', 3: 'CAMION_PESADO' };
   const tollTargets = [...conPeaje, ...googleFail];
-  modal.update(0, tollTargets.length, `Fase 2/2 — TollGuru para ${tollTargets.length} ruta(s) con peaje (${sinPeaje.length} sin peaje ya resueltas)…`);
+  modal.update(0, tollTargets.length, `Fase 2/2 — GetAPI para ${tollTargets.length} ruta(s) con peaje (${sinPeaje.length} sin peaje ya resueltas)…`);
 
   for (let i = 0; i < tollTargets.length; i++) {
     if (cancelado) break;
     const { ruta, originCity, destCity } = tollTargets[i];
-    modal.update(i, tollTargets.length, `[TollGuru] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
-
-    let tgIda = null, errored = false;
-    try {
-      tgIda = await callTollGuruTolls(originCity, destCity);
-      await sleep(400);
-    } catch (err) {
-      console.error('Error TollGuru para', ruta.codigo, err.message);
-      errored = true;
-    }
+    modal.update(i, tollTargets.length, `[GetAPI] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
 
     for (const ejes of [2, 3]) {
-      const idaObj = tgIda ? {
-        tollCLP:     ejes === 2 ? (tgIda.total_2_ejes ?? 0) : (tgIda.total_3_ejes ?? 0),
-        hasToll:     tgIda.hasTolls ?? false,
-        distance_km: tgIda.distance_km ?? null,
-      } : null;
-      pjUpsertToll(db, ruta.id, ejes, idaObj, idaObj, { error: errored });
+      const category = ejesToCategory[ejes];
+      let ida = null, vuelta = null, errored = false;
+      try {
+        ida = await callGetApiTolls(originCity, destCity, category);
+        await sleep(500);
+        // Si el destino no está en GetAPI (notFound), vuelta = mismo resultado ($0)
+        if (!ida || ida.notFound) {
+          vuelta = ida;
+        } else {
+          vuelta = await callGetApiTolls(destCity, originCity, category);
+          await sleep(500);
+        }
+      } catch (err) {
+        console.error('Error GetAPI para', ruta.codigo, ejes, 'ejes:', err.message);
+        errored = true;
+      }
+      pjUpsertToll(db, ruta.id, ejes, ida, vuelta, { error: errored });
+      if (cancelado) break;
     }
 
     if ((i + 1) % 10 === 0) saveDatabase(db);
@@ -1247,7 +1582,7 @@ async function calcularPeajes(content, db, cfg, rutas) {
   saveDatabase(db);
   modal.close();
 
-  const resumen = `Completado: ${sinPeaje.length} sin peaje (Google $0), ${conPeaje.length} con peaje (TollGuru)${googleFail.length > 0 ? `, ${googleFail.length} fallback TollGuru` : ''}.`;
+  const resumen = `Completado: ${sinPeaje.length} sin peaje (Google $0), ${conPeaje.length} con peaje (GetAPI)${googleFail.length > 0 ? `, ${googleFail.length} fallback GetAPI` : ''}.`;
   showAlert(cancelado ? 'Cálculo cancelado (avance guardado)' : resumen);
   renderPeajesAuto(content, db, cfg);
 }
