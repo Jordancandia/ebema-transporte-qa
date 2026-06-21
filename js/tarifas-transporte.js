@@ -112,6 +112,7 @@ export function renderTariffTransportView(container) {
       ${subTabButton('camiones', 'local_shipping', 'Tarifas por Camión')}
       ${subTabButton('combustibles', 'local_gas_station', 'Combustibles y Rendimientos')}
       ${subTabButton('seguros', 'shield', 'Seguros y Permisos')}
+      ${subTabButton('costos-extras', 'add_circle', 'Costos Extras')}
       ${subTabButton('participacion', 'donut_large', 'Participación Rutas')}
       ${subTabButton('variables', 'tune', 'Variables Generales')}
       ${subTabButton('resultados', 'calculate', 'Motor de Costo')}
@@ -144,6 +145,7 @@ export function renderTariffTransportView(container) {
       case 'camiones': renderTarifasCamion(content, db, cfg); break;
       case 'combustibles': renderCombustibles(content, db, cfg); break;
       case 'seguros': renderSeguros(content, db, cfg); break;
+      case 'costos-extras': renderCostosExtras(content, db, cfg); break;
       case 'participacion': renderParticipacion(content, db, cfg); break;
       case 'variables': renderVariables(content, db, cfg); break;
       case 'resultados': renderResultados(content, db, cfg); break;
