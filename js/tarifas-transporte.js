@@ -834,6 +834,17 @@ async function callGoogleDistance(originLat, originLng, destLat, destLng) {
   return data; // { distanceKm, durationMin, distanceText, durationText }
 }
 
+// Prefiltro Google Routes API v2: detecta si una ruta tiene peajes SIN llamar a TollGuru.
+// Retorna { hasTolls, distanceKm }. Si hasTolls=false → peaje=$0, no se llama TollGuru.
+async function callGoogleTollCheck(originCity, destCity) {
+  const { data, error } = await supabase.functions.invoke('google-toll-check', {
+    body: { origin: originCity, destination: destCity }
+  });
+  if (error) throw error;
+  if (data && data.error) throw new Error(data.error);
+  return data; // { hasTolls, distanceKm }
+}
+
 // Crea o actualiza la fila route_tolls para (routeId, ejes) con los resultados
 // de ida/vuelta. Si opts.error, marca la fila para revisión sin tocar valores.
 // Guarda además el desglose por tipo: mainline (Troncal), ramp (Lateral), electronic (TAG).
@@ -1124,9 +1135,11 @@ function createProgressModal(total) {
   };
 }
 
-// Orquesta el cálculo (a demanda) de peajes para las rutas indicadas usando TollGuru.
-// Una sola llamada por dirección (ida / vuelta) retorna costos para 2 Y 3 ejes + distancia KM.
-// Se hacen 2 consultas por ruta (Ida + Vuelta); cada respuesta alimenta ambas filas de ejes.
+// Orquesta el cálculo de peajes en 2 fases:
+//   Fase 1 — Google Routes API: detecta qué rutas tienen peaje (gratis/barato, sin consumir TollGuru).
+//   Fase 2 — TollGuru: solo para rutas donde Google confirmó peaje.
+// Rutas donde Google dice hasTolls=false → se registran con $0 sin tocar TollGuru.
+// Si Google falla en una ruta → esa ruta se envía igual a TollGuru (safe fallback).
 async function calcularPeajes(content, db, cfg, rutas) {
   if (!rutas || rutas.length === 0) {
     showAlert('No hay rutas para calcular con los filtros actuales', 'error');
@@ -1134,43 +1147,80 @@ async function calcularPeajes(content, db, cfg, rutas) {
   }
   const targets = rutas.filter(r => r.lat != null && r.lon != null);
   const sinCoords = rutas.length - targets.length;
-  const totalConsultas = targets.length; // Solo Ida, se duplica para Vuelta
-  const estSeg = totalConsultas * 3; // ~3s por consulta TollGuru
-  const estMin = estSeg < 60 ? `~${estSeg}s` : `~${Math.ceil(estSeg / 60)} min`;
-  const aviso = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán marcadas para revisión.` : '';
-  if (!confirm(`Se calcularán peajes (vía TollGuru) para ${targets.length} ruta(s).\nSolo Ida — el valor se duplica para Vuelta = ${totalConsultas} consultas · cada una retorna 2 y 3 ejes. Tiempo estimado: ${estMin}.${aviso}\n¿Continuar?`)) {
+  const avisoCoords = sinCoords > 0 ? `\n${sinCoords} ruta(s) sin coordenadas quedarán en revisión.` : '';
+
+  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) en 2 fases:\n\n1. Google Routes API detecta cuáles tienen peaje (todas las rutas, sin costo TollGuru).\n2. TollGuru calcula montos exactos solo para las rutas con peaje.${avisoCoords}\n\n¿Continuar?`)) {
     return;
   }
 
-  // Rutas sin coordenadas: marcar directamente para revisión
+  // Rutas sin coordenadas → revisión directa
   rutas.filter(r => r.lat == null || r.lon == null).forEach(ruta => {
     [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
   });
 
+  // ── FASE 1: Prefiltro Google ──────────────────────────────────────────────
   const modal = createProgressModal(targets.length);
+  modal.update(0, targets.length, 'Fase 1/2 — Google detectando rutas con peaje…');
   let cancelado = false;
   modal.cancelBtn.addEventListener('click', () => { cancelado = true; });
+
+  const conPeaje   = []; // { ruta, distanceKm }
+  const sinPeaje   = []; // ruta[]
+  const googleFail = []; // ruta[] — Google falló → irán a TollGuru igual
 
   for (let i = 0; i < targets.length; i++) {
     if (cancelado) break;
     const ruta = targets[i];
     const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
-    modal.update(i, targets.length, `${ruta.codigo} — ${ruta.comuna || ruta.destino || ''} (${ruta.region || ''})`);
+    modal.update(i, targets.length, `[Google] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
 
-    if (!cd || !cd.comuna) {
-      console.warn('Centro sin comuna configurado:', cd?.id, cd?.nombre);
-      [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
-      continue;
-    }
-    if (!ruta.comuna) {
-      console.warn('Ruta sin comuna:', ruta.codigo);
+    if (!cd?.comuna || !ruta.comuna) {
       [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
       continue;
     }
 
-    // TollGuru geocodifica — basta con nombre de comuna (Edge Function añade ", Chile")
     const originCity = cd.comuna.trim();
     const destCity   = ruta.comuna.trim();
+
+    try {
+      const g = await callGoogleTollCheck(originCity, destCity);
+      if (g.hasTolls) {
+        conPeaje.push({ ruta, originCity, destCity, distanceKm: g.distanceKm });
+      } else {
+        sinPeaje.push(ruta);
+        // Sin peaje confirmado por Google → $0, no necesita TollGuru
+        for (const ejes of [2, 3]) {
+          pjUpsertToll(db, ruta.id, ejes,
+            { tollCLP: 0, hasToll: false, distance_km: g.distanceKm },
+            { tollCLP: 0, hasToll: false, distance_km: g.distanceKm }
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Google toll-check falló para', ruta.codigo, err.message, '→ pasa a TollGuru');
+      googleFail.push({ ruta, originCity, destCity, distanceKm: null });
+    }
+    await sleep(150);
+  }
+
+  if (cancelado) {
+    saveDatabase(db);
+    modal.close();
+    showAlert('Cálculo cancelado (avance guardado)');
+    renderPeajesAuto(content, db, cfg);
+    return;
+  }
+
+  saveDatabase(db);
+
+  // ── FASE 2: TollGuru solo para rutas con peaje ────────────────────────────
+  const tollTargets = [...conPeaje, ...googleFail];
+  modal.update(0, tollTargets.length, `Fase 2/2 — TollGuru para ${tollTargets.length} ruta(s) con peaje (${sinPeaje.length} sin peaje ya resueltas)…`);
+
+  for (let i = 0; i < tollTargets.length; i++) {
+    if (cancelado) break;
+    const { ruta, originCity, destCity } = tollTargets[i];
+    modal.update(i, tollTargets.length, `[TollGuru] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
 
     let tgIda = null, errored = false;
     try {
@@ -1181,24 +1231,24 @@ async function calcularPeajes(content, db, cfg, rutas) {
       errored = true;
     }
 
-    // Solamente Ida — el valor de peaje se duplica para Vuelta
     for (const ejes of [2, 3]) {
       const idaObj = tgIda ? {
-        tollCLP:      ejes === 2 ? (tgIda.total_2_ejes ?? 0) : (tgIda.total_3_ejes ?? 0),
-        hasToll:      tgIda.hasTolls ?? false,
-        distance_km:  tgIda.distance_km ?? null,
+        tollCLP:     ejes === 2 ? (tgIda.total_2_ejes ?? 0) : (tgIda.total_3_ejes ?? 0),
+        hasToll:     tgIda.hasTolls ?? false,
+        distance_km: tgIda.distance_km ?? null,
       } : null;
       pjUpsertToll(db, ruta.id, ejes, idaObj, idaObj, { error: errored });
     }
 
-    if (cancelado) break;
     if ((i + 1) % 10 === 0) saveDatabase(db);
   }
 
-  modal.update(targets.length, targets.length, cancelado ? 'Cancelado' : 'Finalizado');
+  modal.update(tollTargets.length, tollTargets.length, cancelado ? 'Cancelado' : 'Finalizado');
   saveDatabase(db);
   modal.close();
-  showAlert(cancelado ? 'Cálculo de peajes cancelado (avance guardado)' : 'Cálculo de peajes finalizado');
+
+  const resumen = `Completado: ${sinPeaje.length} sin peaje (Google $0), ${conPeaje.length} con peaje (TollGuru)${googleFail.length > 0 ? `, ${googleFail.length} fallback TollGuru` : ''}.`;
+  showAlert(cancelado ? 'Cálculo cancelado (avance guardado)' : resumen);
   renderPeajesAuto(content, db, cfg);
 }
 

@@ -128,7 +128,7 @@ export function renderTroncalesView(container) {
       render();
     });
 
-    document.getElementById('tr-nuevo').addEventListener('click', () => abrirModal(null, grupos, db, render));
+    document.getElementById('tr-nuevo').addEventListener('click', () => abrirModalTroncal(null, grupos, db, render));
 
     container.querySelectorAll('.tr-editar').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -156,7 +156,7 @@ function cerrarModal(el) {
   setTimeout(() => el.remove(), 300);
 }
 
-function abrirModal(troncal, grupos, db, onSave) {
+export function abrirModalTroncal(troncal, grupos, db, onSave) {
   const esNuevo = !troncal;
   const t = troncal || { id: generarId(), razonSocial: '', rut: '', activo: true, camiones: [], rutasCobertura: [] };
 

@@ -912,10 +912,10 @@ function renderDashboardShell() {
           <span class="font-body-md text-body-md">Cotizador</span>
         </a>
 
-        <!-- Transportistas (Transports) -->
+        <!-- Proveedores de Transporte -->
         <a class="sidebar-item flex items-center gap-md px-md py-sm text-secondary hover:text-primary hover:bg-surface-container-high transition-colors rounded-lg cursor-pointer" data-tab="transports" id="nav-transports">
-          <span class="material-symbols-outlined">local_shipping</span>
-          <span class="font-body-md text-body-md">Transportes</span>
+          <span class="material-symbols-outlined">groups</span>
+          <span class="font-body-md text-body-md">Proveedores</span>
         </a>
 
         <!-- Rutas de Transporte (Routes + Centros SAP) -->
