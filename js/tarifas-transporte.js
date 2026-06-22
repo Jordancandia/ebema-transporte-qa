@@ -1472,7 +1472,7 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
     ? `\n${enCache} ruta(s) ya tienen caché válida y serán omitidas.\nUsa el botón ↺ por fila para forzar actualización de una ruta específica.`
     : '';
 
-  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s) en 2 fases:\n\n1. Google Routes API detecta cuáles tienen peaje (todas las rutas, sin costo TollGuru).\n2. TollGuru calcula montos exactos solo para las rutas con peaje.${avisoCoords}${avisoCache}\n\n¿Continuar?`)) {
+  if (!confirm(`Se calcularán peajes para ${targets.length} ruta(s):\n\nFase 1: Google obtiene distancias.\nFase 2: GetAPI Chile calcula montos exactos de peajes.${avisoCoords}${avisoCache}\n\n¿Continuar?`)) {
     return;
   }
 
@@ -1481,15 +1481,16 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
     [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
   });
 
-  // ── FASE 1: Prefiltro Google ──────────────────────────────────────────────
+  // ── FASE 1: Google obtiene distancia (ya NO filtra rutas como sin peaje) ────
+  // Google Routes API no es confiable para detectar peajes chilenos.
+  // Su resultado de hasTolls se usa SOLO como referencia; GetAPI es la fuente
+  // autoritativa. Todas las rutas pasan a Fase 2 independientemente de Google.
   const modal = createProgressModal(targets.length);
-  modal.update(0, targets.length, 'Fase 1/2 — Google detectando rutas con peaje…');
+  modal.update(0, targets.length, 'Fase 1/2 — Google obteniendo distancias…');
   let cancelado = false;
   modal.cancelBtn.addEventListener('click', () => { cancelado = true; });
 
-  const conPeaje   = []; // { ruta, distanceKm }
-  const sinPeaje   = []; // ruta[]
-  const googleFail = []; // ruta[] — Google falló → irán a TollGuru igual
+  const tollTargetsPrep = []; // { ruta, originCity, destCity, distanceKm }
 
   for (let i = 0; i < targets.length; i++) {
     if (cancelado) break;
@@ -1500,12 +1501,12 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
       const c2 = pjGetTollRow(db, ruta.id, 2);
       const c3 = pjGetTollRow(db, ruta.id, 3);
       if (c2 && c3 && c2.calculado_en && c3.calculado_en && !c2.needs_review && !c3.needs_review) {
-        continue; // hit de caché — omitir Google + TollGuru para esta ruta
+        continue; // hit de caché — omitir
       }
     }
 
     const cd = (db.logisticsCentres || []).find(c => c.id === ruta.origenId);
-    modal.update(i, targets.length, `[Google] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
+    modal.update(i, targets.length, `[Distancia] ${ruta.codigo} — ${ruta.comuna || ruta.destino || ''}`);
 
     if (!cd?.comuna || !ruta.comuna) {
       [2, 3].forEach(ejes => pjUpsertToll(db, ruta.id, ejes, null, null, { error: true }));
@@ -1514,25 +1515,16 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
 
     const originCity = cd.comuna.trim();
     const destCity   = ruta.comuna.trim();
+    let distanceKm   = null;
 
     try {
       const g = await callGoogleTollCheck(originCity, destCity);
-      if (g.hasTolls) {
-        conPeaje.push({ ruta, originCity, destCity, distanceKm: g.distanceKm });
-      } else {
-        sinPeaje.push(ruta);
-        // Sin peaje confirmado por Google → $0, no necesita TollGuru
-        for (const ejes of [2, 3]) {
-          pjUpsertToll(db, ruta.id, ejes,
-            { tollCLP: 0, hasToll: false, distance_km: g.distanceKm },
-            { tollCLP: 0, hasToll: false, distance_km: g.distanceKm }
-          );
-        }
-      }
+      distanceKm = g.distanceKm ?? null;
     } catch (err) {
-      console.warn('Google toll-check falló para', ruta.codigo, err.message, '→ pasa a TollGuru');
-      googleFail.push({ ruta, originCity, destCity, distanceKm: null });
+      console.warn('Google distance falló para', ruta.codigo, err.message);
     }
+
+    tollTargetsPrep.push({ ruta, originCity, destCity, distanceKm });
     await sleep(150);
   }
 
@@ -1544,12 +1536,10 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
     return;
   }
 
-  saveDatabase(db);
-
-  // ── FASE 2: GetAPI solo para rutas donde Google confirmó peaje ──────────────
+  // ── FASE 2: GetAPI para TODAS las rutas — fuente autoritativa de peajes ──────
   const ejesToCategory = { 2: 'CAMION_2_EJES', 3: 'CAMION_PESADO' };
-  const tollTargets = [...conPeaje, ...googleFail];
-  modal.update(0, tollTargets.length, `Fase 2/2 — GetAPI para ${tollTargets.length} ruta(s) con peaje (${sinPeaje.length} sin peaje ya resueltas)…`);
+  const tollTargets = tollTargetsPrep;
+  modal.update(0, tollTargets.length, `Fase 2/2 — GetAPI para ${tollTargets.length} ruta(s)…`);
 
   for (let i = 0; i < tollTargets.length; i++) {
     if (cancelado) break;
@@ -1584,7 +1574,7 @@ async function calcularPeajes(content, db, cfg, rutas, { force = false } = {}) {
   saveDatabase(db);
   modal.close();
 
-  const resumen = `Completado: ${sinPeaje.length} sin peaje (Google $0), ${conPeaje.length} con peaje (GetAPI)${googleFail.length > 0 ? `, ${googleFail.length} fallback GetAPI` : ''}.`;
+  const resumen = `Completado: ${tollTargets.length} ruta(s) procesadas por GetAPI.`;
   showAlert(cancelado ? 'Cálculo cancelado (avance guardado)' : resumen);
   renderPeajesAuto(content, db, cfg);
 }
