@@ -121,7 +121,7 @@ export function renderTransportsView(container) {
             <span class="material-symbols-outlined text-[24px]">close</span>
           </button>
         </div>
-        <div class="p-lg max-h-[80vh] overflow-y-auto space-y-lg">
+        <div class="p-lg max-h-[80vh] overflow-y-auto space-y-md">
           <!-- Selector Tipo -->
           <div>
             <p class="font-label-caps text-label-caps text-secondary mb-sm">TIPO DE PROVEEDOR</p>
@@ -138,26 +138,16 @@ export function renderTransportsView(container) {
               </button>
             </div>
           </div>
-          <!-- Campos comunes -->
+          <!-- Campos comunes (iguales para ambos tipos) -->
           <div class="space-y-md border-t border-outline-variant pt-md">
             <div class="space-y-xs">
               <label class="font-label-caps text-label-caps text-secondary block">RAZÓN SOCIAL</label>
               <input type="text" id="np-razonsocial" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary rounded bg-white" placeholder="Ej. Transportes Express Ltda.">
             </div>
-            <div class="space-y-xs">
-              <label class="font-label-caps text-label-caps text-secondary block">RUT EMPRESA</label>
-              <input type="text" id="np-rut" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary rounded bg-white" placeholder="Ej: 76.849.201-3">
-            </div>
-          </div>
-          <!-- Campos ULTIMA MILLA -->
-          <div id="np-campos-ultima-milla" class="space-y-md border-t border-outline-variant pt-md">
-            <p class="font-label-caps text-label-caps text-blue-600 text-xs flex items-center gap-xs">
-              <span class="material-symbols-outlined text-[14px]">local_shipping</span> DATOS ÚLTIMA MILLA
-            </p>
             <div class="grid grid-cols-2 gap-md">
               <div class="space-y-xs">
-                <label class="font-label-caps text-label-caps text-secondary block">PATENTE CAMIÓN</label>
-                <input type="text" id="np-patente" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary rounded bg-white" placeholder="Ej: AA-BB-11">
+                <label class="font-label-caps text-label-caps text-secondary block">RUT EMPRESA</label>
+                <input type="text" id="np-rut" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary rounded bg-white" placeholder="Ej: 76.849.201-3">
               </div>
               <div class="space-y-xs">
                 <label class="font-label-caps text-label-caps text-secondary block">CÓDIGO SAP</label>
@@ -178,14 +168,9 @@ export function renderTransportsView(container) {
                 <input type="email" id="np-email" class="w-full border border-[#CED4DA] p-sm font-body-md text-body-md focus:border-primary rounded bg-white" placeholder="contacto@empresa.cl">
               </div>
             </div>
-          </div>
-          <!-- Campos TRONCAL -->
-          <div id="np-campos-troncal" class="hidden border-t border-outline-variant pt-md">
-            <p class="font-label-caps text-label-caps text-amber-600 text-xs flex items-center gap-xs mb-sm">
-              <span class="material-symbols-outlined text-[14px]">sync_alt</span> DATOS TRONCAL
-            </p>
-            <div class="bg-amber-50 border border-amber-200 rounded p-md text-[12px] text-amber-800">
-              Una vez creado el proveedor, podrás agregar camiones y rutas de cobertura desde el botón <b>Editar</b> en la tabla.
+            <div class="bg-surface-container-low border border-outline-variant rounded p-sm text-[11px] text-secondary flex items-start gap-xs">
+              <span class="material-symbols-outlined text-[14px] mt-px shrink-0">info</span>
+              Una vez registrado el proveedor, podrás agregar patentes, choferes, documentos y centros logísticos desde el botón <b>Editar</b>.
             </div>
           </div>
         </div>
@@ -320,10 +305,6 @@ export function renderTransportsView(container) {
         btn.className = `tipo-selector flex flex-col items-center gap-sm p-md border-2 rounded-lg transition-all cursor-pointer ${tipo === 'troncal' ? 'border-amber-500 bg-amber-50' : 'border-outline-variant text-secondary hover:border-amber-300 hover:bg-amber-50/50'}`;
       }
     });
-    const umFields = container.querySelector('#np-campos-ultima-milla');
-    const trFields = container.querySelector('#np-campos-troncal');
-    if (umFields) umFields.classList.toggle('hidden', tipo !== 'ultima_milla');
-    if (trFields) trFields.classList.toggle('hidden', tipo !== 'troncal');
   }
 
   // ── Filtros de tipo ───────────────────────────────────────────────────────
@@ -347,7 +328,6 @@ export function renderTransportsView(container) {
   container.querySelector('#btn-create-transport').addEventListener('click', () => {
     container.querySelector('#np-razonsocial').value = '';
     container.querySelector('#np-rut').value = '';
-    container.querySelector('#np-patente').value = '';
     container.querySelector('#np-email').value = '';
     container.querySelector('#np-telefono').value = '';
     container.querySelector('#np-direccion').value = '';
@@ -366,46 +346,49 @@ export function renderTransportsView(container) {
   container.querySelector('#np-rut').addEventListener('blur', e => { e.target.value = formatRut(e.target.value); });
 
   container.querySelector('#btn-save-nuevo-proveedor').addEventListener('click', () => {
-    const db2 = getDatabase();
+    const db2       = getDatabase();
     const razonSocial = (container.querySelector('#np-razonsocial').value || '').trim();
-    const rut = container.querySelector('#np-rut').value.trim();
+    const rut         = container.querySelector('#np-rut').value.trim();
+    const codigoSap   = (container.querySelector('#np-codigosap').value || '').toUpperCase().trim();
+    const direccion   = container.querySelector('#np-direccion').value.trim();
+    const telefono    = container.querySelector('#np-telefono').value.trim();
+    const email       = container.querySelector('#np-email').value.trim().toLowerCase();
 
     if (!razonSocial) { showAlert('La Razón Social es requerida.', 'error'); return; }
     if (!validateRut(rut)) { showAlert('El RUT ingresado no es válido.', 'error'); return; }
 
+    const rutEnUltimaMilla = (db2.transports || []).some(t => t.rut === rut);
+    const rutEnTroncal     = (db2.troncales  || []).some(t => t.rut === rut);
+    if (rutEnUltimaMilla || rutEnTroncal) { showAlert('RUT ya registrado en proveedores.', 'error'); return; }
+
     if (nuevoTipo === 'ultima_milla') {
-      const patente   = (container.querySelector('#np-patente').value || '').toUpperCase().replace(/\s+/g,'');
-      const codigoSap = (container.querySelector('#np-codigosap').value || '').toUpperCase();
-      const direccion = container.querySelector('#np-direccion').value.trim();
-      const telefono  = container.querySelector('#np-telefono').value.trim();
-      const email     = container.querySelector('#np-email').value.trim();
-
-      if (!patente || patente.length < 5) { showAlert('Patente inválida.', 'error'); return; }
-      if ((db2.transports || []).some(t => t.rut === rut))      { showAlert('RUT ya registrado.', 'error'); return; }
-      if ((db2.transports || []).some(t => t.patente === patente)) { showAlert('Patente ya registrada.', 'error'); return; }
-
       const id = 't' + Date.now();
-      const capacidadInicial = 10;
       db2.transports = db2.transports || [];
       db2.transports.push({
-        id, razonSocial, rut, patente, codigoSap, direccion, telefono, email,
-        ownerEmail: email.toLowerCase(),
+        id, razonSocial, rut, codigoSap, direccion, telefono, email,
+        ownerEmail: email,
         activo: true,
-        camiones: [{ id: 'c'+id, patente, modelo:'', anio:2020, capacidad: capacidadInicial, ejes: calcEjes(capacidadInicial), dimensiones:{largo:0,ancho:0,alto:0}, documentos:{}, choferRut:'' }],
+        camiones: [],
         choferes: [],
+        documentos: {},
         centrosServicio: []
       });
       saveDatabase(db2);
-      showAlert(`Proveedor Última Milla "${razonSocial}" creado con éxito.`);
+      showAlert(`Proveedor Última Milla "${razonSocial}" creado. Agrega patentes y choferes desde Editar.`);
     } else {
-      if ((db2.troncales || []).some(t => t.rut === rut)) { showAlert('RUT ya registrado en Troncales.', 'error'); return; }
       db2.troncales = db2.troncales || [];
       db2.troncales.push({
         id: 'tr_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-        razonSocial, rut, activo: true, camiones: [], rutasCobertura: []
+        razonSocial, rut, codigoSap, direccion, telefono, email,
+        activo: true,
+        camiones: [],
+        choferes: [],
+        documentos: {},
+        rutasCobertura: [],
+        centrosServicio: []
       });
       saveDatabase(db2);
-      showAlert(`Proveedor Troncal "${razonSocial}" creado. Agrega camiones y rutas desde Editar.`);
+      showAlert(`Proveedor Troncal "${razonSocial}" creado. Agrega patentes, choferes y rutas desde Editar.`);
     }
 
     closeNuevo();
